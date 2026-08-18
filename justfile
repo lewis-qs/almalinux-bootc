@@ -140,3 +140,65 @@ sigstore-keygen:
     echo "Public key installed to {{public_key}} — commit it."
     echo "Private key: $out/sigstore.private"
     echo "Set GH secret SIGSTORE_PRIVATE_KEY from it and back it up, then: rm -rf $out"
+
+[group('release')]
+image-version source:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${GHCR_TOKEN:?image-version needs GHCR_TOKEN}"
+    : "${GITHUB_ACTOR:?image-version needs GITHUB_ACTOR}"
+    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+    dest='{{image}}'; host="${dest%%/*}"
+    authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
+    printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
+    tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--tls-verify=false)
+    podman run --rm --security-opt label=disable --network host \
+        -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+        {{skopeo_image}} inspect "${tls[@]}" "docker://${dest}:{{source}}" \
+        | jq -r '.Labels["version"] // .Labels["redhat.version-id"] // empty'
+
+[group('release')]
+release-promote version source:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${GHCR_TOKEN:?release-promote needs GHCR_TOKEN}"
+    : "${GITHUB_ACTOR:?release-promote needs GITHUB_ACTOR}"
+    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+    dest='{{image}}'; host="${dest%%/*}"
+    authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
+    printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
+    tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--src-tls-verify=false --dest-tls-verify=false)
+    itls=(); [ "${SIGN_INSECURE:-}" = "true" ] && itls=(--tls-verify=false)
+    if podman run --rm --security-opt label=disable --network host \
+         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+         {{skopeo_image}} inspect "${itls[@]}" --raw "docker://${dest}:{{version}}" >/dev/null 2>&1; then
+        echo "${dest}:{{version}} already present — skipping promote"
+        exit 0
+    fi
+    echo "Promoting ${dest}:{{source}} -> ${dest}:{{version}} (digest-preserving; signatures carry over)"
+    podman run --rm --security-opt label=disable --network host \
+        -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+        {{skopeo_image}} copy --all --preserve-digests "${tls[@]}" \
+        "docker://${dest}:{{source}}" "docker://${dest}:{{version}}"
+
+[group('release')]
+verify-image ref:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${GHCR_TOKEN:?verify-image needs GHCR_TOKEN}"
+    : "${GITHUB_ACTOR:?verify-image needs GITHUB_ACTOR}"
+    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+    cp '{{public_key}}' "$work/pub"
+    ref='{{ref}}'; host="${ref%%/*}"; repo="${ref%:*}"
+    mkdir "$work/regd"
+    printf 'docker:\n  %s:\n    use-sigstore-attachments: true\n' "$host" > "$work/regd/reg.yaml"
+    authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
+    printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
+    printf '{"default":[{"type":"reject"}],"transports":{"docker":{"%s":[{"type":"sigstoreSigned","keyPath":"/work/pub","signedIdentity":{"type":"matchRepository"}}]}}}' "$repo" > "$work/verify.json"
+    tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--src-tls-verify=false)
+    echo "Verifying every instance of ${ref} against the committed public key"
+    podman run --rm --security-opt label=disable --network host \
+        -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+        {{skopeo_image}} copy --multi-arch all --policy /work/verify.json --registries.d /work/regd "${tls[@]}" \
+        "docker://${ref}" dir:/tmp/verified
+    echo "VERIFIED all instances of ${ref}"
