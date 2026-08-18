@@ -1,0 +1,87 @@
+name: Weekly release
+run-name: >-
+  Weekly release${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && ' (dry run)' || '' }}
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Compute versions without promoting images or creating releases'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE_NAME: almalinux
+  IMAGE_REGISTRY: ghcr.io/lewis-qs/bootc
+
+jobs:
+  release:
+    if: ${{ github.event_name != 'schedule' || github.repository == 'lewis-qs/almalinux-bootc' }}
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: release-${{ matrix.VERSION_MAJOR }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        VERSION_MAJOR: ['9', '10', '10-kitten']
+    env:
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_ACTOR: ${{ github.repository_owner }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-just
+
+      - name: Compute release version
+        id: ver
+        env:
+          MAJOR: ${{ matrix.VERSION_MAJOR }}
+        run: |
+          date="$(date -u +%Y%m%d)"
+          if [ "$MAJOR" = "10-kitten" ]; then
+            version="10-kitten-${date}"
+          else
+            vid="$(just image-version "$MAJOR")"
+            [ -n "$vid" ] || { echo "::error::no version label on ${IMAGE_REGISTRY}/${IMAGE_NAME}:${MAJOR}"; exit 1; }
+            version="${vid}-${date}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Release version for $MAJOR: $version"
+
+      - name: Promote and verify
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          MAJOR: ${{ matrix.VERSION_MAJOR }}
+        run: |
+          just verify-image "${IMAGE_REGISTRY}/${IMAGE_NAME}:${MAJOR}"
+          just release-promote "$VERSION" "$MAJOR"
+          just verify-image "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+
+      - name: Create GitHub Release
+        if: ${{ env.DRY_RUN != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          MAJOR: ${{ matrix.VERSION_MAJOR }}
+        run: |
+          ref="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION already exists — skipping"
+            exit 0
+          fi
+          gh release create "$VERSION" \
+            --title "AlmaLinux ${MAJOR} — ${VERSION}" \
+            --notes "\`\`\`
+          podman pull ${ref}
+          \`\`\`
+
+          Signed with the sigstore key in \`cosign.pub\`."
