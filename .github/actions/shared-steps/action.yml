@@ -1,5 +1,5 @@
 name: "Build and Push"
-description: Build and push the image to the container registry
+description: Build, rechunk, push, and sign the image via just recipes
 
 inputs:
   VERSION_MAJOR:
@@ -9,16 +9,16 @@ inputs:
     description: The date stamp used for tagging the image (e.g. 20260403)
     required: true
   IMAGE_REGISTRY:
-    description: The container registry to push the image to (e.g. quay.io/almalinuxorg)
+    description: The container registry to push the image to (e.g. ghcr.io/lewis-qs/bootc)
     required: true
-  REGISTRY_USER:
+  GITHUB_ACTOR:
     description: The username for authenticating with the container registry
     required: true
-  REGISTRY_PASSWORD:
-    description: The password for authenticating with the container registry
+  GHCR_TOKEN:
+    description: The token for authenticating with the container registry
     required: true
   SIGSTORE_PRIVATE_KEY:
-    description: The sigstore private key (cosign format) to sign with
+    description: The sigstore private key to sign with
     required: true
   SIGSTORE_PASSPHRASE:
     description: The passphrase for the sigstore private key (empty if none)
@@ -32,22 +32,17 @@ runs:
       shell: bash
       run: |
         echo "VARIANT=--platform ${{ env.PLATFORM }}" >> "$GITHUB_ENV"
-
-        IMAGE_DEST=${{ inputs.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
-        echo "IMAGE_DEST=${IMAGE_DEST}" >> "$GITHUB_ENV"
-
+        echo "IMAGE_DEST=${{ inputs.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_ENV"
         ARCH=${{ matrix.ARCH }}
         echo "CLEAN_ARCH=${ARCH//\//_}" >> "$GITHUB_ENV"
 
     - name: Login to registry
       shell: bash
       env:
-        REGISTRY: ${{ inputs.IMAGE_REGISTRY }}
-        REGISTRY_USER: ${{ inputs.REGISTRY_USER }}
-        REGISTRY_PASSWORD: ${{ inputs.REGISTRY_PASSWORD }}
-      run: |
-        install -m 700 -d "$HOME/.docker"
-        printf '%s' "$REGISTRY_PASSWORD" | podman login --authfile "$HOME/.docker/config.json" --username "$REGISTRY_USER" --password-stdin "${REGISTRY%%/*}"
+        IMAGE_REGISTRY: ${{ inputs.IMAGE_REGISTRY }}
+        GITHUB_ACTOR: ${{ inputs.GITHUB_ACTOR }}
+        GHCR_TOKEN: ${{ inputs.GHCR_TOKEN }}
+      run: just ghcr-login
 
     - name: Check update
       shell: bash
@@ -79,10 +74,12 @@ runs:
       id: build
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
       shell: bash
+      env:
+        PLATFORM: ${{ env.PLATFORM }}
+        VERSION_MAJOR: ${{ inputs.VERSION_MAJOR }}
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
       run: |
         BUILD_TIME=$(date -Iseconds)
-
-        # define a multiline variable with heredoc
         LABELS=$(cat <<EOF
         redhat.id=${{ steps.info.outputs.id }}
         redhat.version-id=${{ steps.info.outputs.version-id }}
@@ -96,28 +93,18 @@ runs:
         org.opencontainers.image.url=${{ github.event.repository.html_url }}
         EOF
         )
-
-        while IFS= read -r label; do
-          ALL_LABELS="$ALL_LABELS --label=\"$label\" --annotation=\"$label\""
-        done <<< "$LABELS"
-
-        make image \
-          PLATFORM=${{ env.PLATFORM }} \
-          LABELS="${ALL_LABELS}" \
-          IMAGE_NAME=${{ env.IMAGE_NAME }} \
-          VERSION_MAJOR=${{ inputs.VERSION_MAJOR }}
-
+        export LABELS
+        just image
         echo "image-id=$(cat /tmp/image-id)" >> $GITHUB_OUTPUT
 
     - name: rechunk image
       id: rechunk
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
       shell: bash
+      env:
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
       run: |
-        make rechunk \
-          PLATFORM=${{ env.PLATFORM }} \
-          IMAGE_NAME=${{ env.IMAGE_NAME }}
-
+        just rechunk
         echo "image-id=sha256:$(sudo podman image inspect ${{ env.IMAGE_NAME }} -f "{{.Id}}")" >> $GITHUB_OUTPUT
 
     - name: Run Image
@@ -137,33 +124,21 @@ runs:
         echo "long-version=$(echo "$INFO" | grep "^VERSION_ID=" | cut -d'=' -f2 | tr -d '"').${{ inputs.DATE_STAMP }}.0" >> $GITHUB_OUTPUT
         echo "vendor=$(echo "$INFO" | grep "^VENDOR_NAME=" | cut -d'=' -f2 | tr -d '"')" >> $GITHUB_OUTPUT
 
-    - name: Push to registry
+    - name: Push and sign
       id: push
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
+      shell: bash
       env:
         IMAGE_ID: ${{ steps.rechunk.outputs.image-id }}
         VERSION: ${{ steps.run.outputs.version-id }}
-      shell: bash
-      run: |
-        # The push fails for unknown reasons sometimes, so we'll retry it a few times
-        for i in {1..5}; do
-          sudo podman push --authfile "$HOME/.docker/config.json" --digestfile=/tmp/digestfile ${{ env.IMAGE_ID }} \
-            docker://${IMAGE_DEST}:${{ env.VERSION }}-${{ inputs.DATE_STAMP }}-${{ env.CLEAN_ARCH }} && break || sleep $((10*i))
-        done
-        [ -f /tmp/digestfile ] || exit 1
-        echo "digest=$(cat /tmp/digestfile)" >> $GITHUB_OUTPUT
-        echo "image-ref=${IMAGE_DEST}:${{ env.VERSION }}-${{ inputs.DATE_STAMP }}-${{ env.CLEAN_ARCH }}" >> $GITHUB_OUTPUT
-        sudo podman inspect ${{ env.IMAGE_ID }}
-
-    - name: Sign Image
-      if: ${{ github.event_name != 'pull_request' && (env.res != 0 || github.event_name == 'workflow_dispatch') }}
-      uses: ./.github/actions/sign
-      with:
-        image-ref: ${{ steps.push.outputs.image-ref }}
-        digest: ${{ steps.push.outputs.digest }}
-        public-key: ${{ github.workspace }}/cosign.pub
+        GITHUB_ACTOR: ${{ inputs.GITHUB_ACTOR }}
+        GHCR_TOKEN: ${{ inputs.GHCR_TOKEN }}
         SIGSTORE_PRIVATE_KEY: ${{ inputs.SIGSTORE_PRIVATE_KEY }}
         SIGSTORE_PASSPHRASE: ${{ inputs.SIGSTORE_PASSPHRASE }}
+      run: |
+        REF="${IMAGE_DEST}:${VERSION}-${{ inputs.DATE_STAMP }}-${CLEAN_ARCH}"
+        just push-image "$REF" "$IMAGE_ID"
+        echo "digest=$(cat /tmp/digestfile)" >> $GITHUB_OUTPUT
 
     - name: Create Job Outputs
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
