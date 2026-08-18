@@ -9,7 +9,6 @@ public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable@sha256:8870d39b1f18e6421da42aa13e562ce61cc58f230d238f4a905efe959ff8f491")
 podman := "sudo podman"
 
-# Build the bootc image for {{version_major}} on {{platform}} (LABELS env -> labels + annotations).
 [group('build')]
 image:
     #!/usr/bin/env bash
@@ -29,7 +28,6 @@ image:
         -f {{version_major}}/Containerfile \
         .
 
-# Rechunk the freshly built image into fewer, reproducible layers.
 [group('build')]
 rechunk:
     #!/usr/bin/env bash
@@ -42,7 +40,6 @@ rechunk:
     {{podman}} tag localhost/rechunked-{{image_name}}:latest localhost/{{image_name}}:latest
     {{podman}} rmi localhost/rechunked-{{image_name}}:latest
 
-# Push {{image_id}} to {{ref}} (with retries), then sign + verify the pushed digest.
 [group('publish')]
 push-image ref image_id:
     #!/usr/bin/env bash
@@ -54,7 +51,6 @@ push-image ref image_id:
     [ -f /tmp/digestfile ]
     just sign-image '{{ref}}' "$(cat /tmp/digestfile)"
 
-# Assemble, push, and sign the multi-arch manifest (reads DIGESTS_JSON, TAGS, LABELS from env).
 [group('publish')]
 push-manifest:
     #!/usr/bin/env bash
@@ -86,9 +82,6 @@ push-manifest:
     done <<< "$TAGS"
     just sign-image "$ref" "$(cat /tmp/digestfile)" index-only
 
-# Sign {{ref}} at {{digest}} with the sigstore key, then verify it against the
-# committed public key under a fail-closed policy. Skopeo runs from a pinned
-# container; auth and key material stay in a throwaway work dir.
 [group('signing')]
 [private]
 sign-image ref digest multi_arch="":
@@ -123,7 +116,6 @@ sign-image ref digest multi_arch="":
         "$src" dir:/tmp/verified
     echo "Signed + verified ${ref} @ {{digest}}"
 
-# Log podman in to the registry host using GHCR_TOKEN + GITHUB_ACTOR.
 [group('auth')]
 [private]
 ghcr-login:
@@ -135,7 +127,6 @@ ghcr-login:
     host='{{registry}}'; host="${host%%/*}"
     printf '%s' "$GHCR_TOKEN" | podman login --authfile "$HOME/.docker/config.json" -u "$GITHUB_ACTOR" --password-stdin "$host"
 
-# Generate a passphrase-less sigstore keypair and install the public key to {{public_key}}.
 [group('signing')]
 sigstore-keygen:
     #!/usr/bin/env bash
