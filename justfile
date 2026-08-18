@@ -175,7 +175,7 @@ release-promote version source:
         echo "${dest}:{{version}} already present — skipping promote"
         exit 0
     fi
-    echo "Promoting ${dest}:{{source}} -> ${dest}:{{version}} (digest-preserving; signatures carry over)"
+    echo "Promoting ${dest}:{{source}} -> ${dest}:{{version}}"
     podman run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} copy --all --preserve-digests "${tls[@]}" \

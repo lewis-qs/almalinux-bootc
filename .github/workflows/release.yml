@@ -80,10 +80,8 @@ jobs:
           fi
           gh release create "$VERSION" \
             --title "AlmaLinux ${MAJOR} — ${VERSION}" \
-            --notes "Signed AlmaLinux bootc image (major \`${MAJOR}\`), promoted digest-preserving from \`:${MAJOR}\`.
-
-          \`\`\`
+            --notes "\`\`\`
           podman pull ${ref}
           \`\`\`
 
-          Verified against the sigstore public key committed at \`cosign.pub\` (also shipped in the image at \`/usr/share/almalinux-bootc/cosign.pub\`)."
+          Signed with the sigstore key in \`cosign.pub\`."
