@@ -17,15 +17,13 @@ inputs:
   REGISTRY_PASSWORD:
     description: The password for authenticating with the container registry
     required: true
-  KMS_KEY_ALIAS:
-    description: The AWS KMS alias to use for signing
+  SIGSTORE_PRIVATE_KEY:
+    description: The sigstore private key (cosign format) to sign with
+    required: true
+  SIGSTORE_PASSPHRASE:
+    description: The passphrase for the sigstore private key (empty if none)
     required: false
-  AWS_ROLE_ARN:
-    description: The AWS role ARN to assume for signing
-    required: false
-  AWS_REGION:
-    description: The AWS region to use for signing
-    required: false
+    default: ''
 
 runs:
   using: "composite"
@@ -35,19 +33,21 @@ runs:
       run: |
         echo "VARIANT=--platform ${{ env.PLATFORM }}" >> "$GITHUB_ENV"
 
-        # quay.io/almalinuxorg/almalinux-bootc
         IMAGE_DEST=${{ inputs.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
         echo "IMAGE_DEST=${IMAGE_DEST}" >> "$GITHUB_ENV"
 
         ARCH=${{ matrix.ARCH }}
         echo "CLEAN_ARCH=${ARCH//\//_}" >> "$GITHUB_ENV"
 
-    - name: Login in to registry
-      uses: redhat-actions/podman-login@v1 # Also creates $HOME/.docker/config.json, which is used by Cosign for authentication.
-      with:
-        registry: ${{ inputs.IMAGE_REGISTRY }}
-        username: ${{ inputs.REGISTRY_USER }}
-        password: ${{ inputs.REGISTRY_PASSWORD }}
+    - name: Login to registry
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.IMAGE_REGISTRY }}
+        REGISTRY_USER: ${{ inputs.REGISTRY_USER }}
+        REGISTRY_PASSWORD: ${{ inputs.REGISTRY_PASSWORD }}
+      run: |
+        install -m 700 -d "$HOME/.docker"
+        printf '%s' "$REGISTRY_PASSWORD" | podman login --authfile "$HOME/.docker/config.json" --username "$REGISTRY_USER" --password-stdin "${REGISTRY%%/*}"
 
     - name: Check update
       shell: bash
@@ -147,7 +147,7 @@ runs:
       run: |
         # The push fails for unknown reasons sometimes, so we'll retry it a few times
         for i in {1..5}; do
-          sudo podman push --digestfile=/tmp/digestfile ${{ env.IMAGE_ID }} \
+          sudo podman push --authfile "$HOME/.docker/config.json" --digestfile=/tmp/digestfile ${{ env.IMAGE_ID }} \
             docker://${IMAGE_DEST}:${{ env.VERSION }}-${{ inputs.DATE_STAMP }}-${{ env.CLEAN_ARCH }} && break || sleep $((10*i))
         done
         [ -f /tmp/digestfile ] || exit 1
@@ -159,10 +159,11 @@ runs:
       if: ${{ github.event_name != 'pull_request' && (env.res != 0 || github.event_name == 'workflow_dispatch') }}
       uses: ./.github/actions/sign
       with:
-        image-ref: ${{ steps.push.outputs.image-ref }}@${{ steps.push.outputs.digest }}
-        KMS_KEY_ALIAS: ${{ inputs.KMS_KEY_ALIAS }}
-        AWS_ROLE_ARN: ${{ inputs.AWS_ROLE_ARN }}
-        AWS_REGION: ${{ inputs.AWS_REGION }}
+        image-ref: ${{ steps.push.outputs.image-ref }}
+        digest: ${{ steps.push.outputs.digest }}
+        public-key: ${{ github.workspace }}/cosign.pub
+        SIGSTORE_PRIVATE_KEY: ${{ inputs.SIGSTORE_PRIVATE_KEY }}
+        SIGSTORE_PASSPHRASE: ${{ inputs.SIGSTORE_PASSPHRASE }}
 
     - name: Create Job Outputs
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}

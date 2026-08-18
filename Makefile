@@ -5,6 +5,10 @@ VERSION_MAJOR = 10
 PLATFORM = linux/amd64
 LABELS ?=
 
+SKOPEO ?= skopeo
+PUBLIC_KEY ?= cosign.pub
+MULTI_ARCH ?=
+
 .ONESHELL:
 .PHONY: all
 all: rechunk
@@ -32,3 +36,17 @@ rechunk:
 		localhost/$(IMAGE_NAME):latest localhost/rechunked-$(IMAGE_NAME):latest && \
 	$(PODMAN) tag localhost/rechunked-$(IMAGE_NAME):latest localhost/$(IMAGE_NAME):latest && \
 	$(PODMAN) rmi localhost/rechunked-$(IMAGE_NAME):latest
+
+.PHONY: sign
+sign:
+	set -e
+	ref='$(IMAGE_REF)'; dig='$(DIGEST)'; pub='$(PUBLIC_KEY)'; key='$(SIGN_KEY)'; pass='$(SIGN_PASS)'; ma='$(MULTI_ARCH)'
+	repo="$${ref%:*}"
+	src="docker://$${repo}@$${dig}"
+	flag=""; [ -n "$$ma" ] && flag="--multi-arch $$ma"
+	regd="$$(mktemp -d)"; policy="$$(mktemp)"; verify="$$(mktemp -d)"
+	trap 'rm -rf "$$regd" "$$policy" "$$verify"' EXIT
+	printf 'docker:\n  %s:\n    use-sigstore-attachments: true\n' "$${ref%%/*}" > "$$regd/sign.yaml"
+	printf '{"default":[{"type":"reject"}],"transports":{"docker":{"%s":[{"type":"sigstoreSigned","keyPath":"%s","signedIdentity":{"type":"matchRepository"}}]}}}' "$$repo" "$$pub" > "$$policy"
+	$(SKOPEO) --registries.d "$$regd" copy --preserve-digests $$flag --sign-by-sigstore-private-key "$$key" --sign-passphrase-file "$$pass" "$$src" "docker://$$ref"
+	$(SKOPEO) --registries.d "$$regd" copy --preserve-digests $$flag --policy "$$policy" "$$src" "dir:$$verify"
