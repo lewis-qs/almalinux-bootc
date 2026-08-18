@@ -22,15 +22,18 @@ env:
 
 jobs:
   release:
-    if: ${{ github.event_name != 'schedule' || github.repository == 'lewis-qs/bootc-images' }}
+    if: ${{ github.event_name != 'schedule' || github.repository == 'lewis-qs/almalinux-bootc' }}
     runs-on: ubuntu-24.04
+    concurrency:
+      group: release-${{ matrix.VERSION_MAJOR }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
         VERSION_MAJOR: ['9', '10', '10-kitten']
     env:
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GITHUB_ACTOR: ${{ github.actor }}
+      GITHUB_ACTOR: ${{ github.repository_owner }}
       DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
     steps:
       - uses: actions/checkout@v7
@@ -59,6 +62,7 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           MAJOR: ${{ matrix.VERSION_MAJOR }}
         run: |
+          just verify-image "${IMAGE_REGISTRY}/${IMAGE_NAME}:${MAJOR}"
           just release-promote "$VERSION" "$MAJOR"
           just verify-image "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
 

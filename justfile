@@ -155,7 +155,7 @@ image-version source:
     podman run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} inspect "${tls[@]}" "docker://${dest}:{{source}}" \
-        | jq -r '.Labels["version"] // .Labels["redhat.version-id"] // empty'
+        | jq -r '.Labels["version"] // .Labels["redhat.version-id"] // empty' | tr -d '\r\n'
 
 [group('release')]
 release-promote version source:
