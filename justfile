@@ -71,12 +71,12 @@ push-image ref oci_dir:
     printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
     tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--dest-tls-verify=false)
     for i in 1 2 3 4 5; do
-        podman run --rm --security-opt label=disable --network host \
+        {{podman}} run --rm --security-opt label=disable --network host \
             -v '{{oci_dir}}':/img:Z -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
             {{skopeo_image}} copy --digestfile=/work/digestfile "${tls[@]}" oci:/img "docker://${ref}" && break || sleep $((10 * i))
     done
-    [ -s "$work/digestfile" ]
-    cp "$work/digestfile" /tmp/digestfile
+    sudo test -s "$work/digestfile"
+    sudo cat "$work/digestfile" > /tmp/digestfile
     just sign-image "$ref" "$(cat /tmp/digestfile)"
 
 [group('publish')]
@@ -132,13 +132,13 @@ sign-image ref digest multi_arch="":
     ma=(); [ -n '{{multi_arch}}' ] && ma=(--multi-arch '{{multi_arch}}')
     tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--src-tls-verify=false --dest-tls-verify=false)
     echo "Signing ${ref} @ {{digest}} (native sigstore via {{skopeo_image}})"
-    podman run --rm --security-opt label=disable --network host \
+    {{podman}} run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} copy --registries.d /work/regd --preserve-digests "${ma[@]}" "${tls[@]}" \
         --sign-by-sigstore-private-key /work/key --sign-passphrase-file /work/pass \
         "$src" "docker://${ref}"
     echo "Verifying ${ref} @ {{digest}} against the committed public key"
-    podman run --rm --security-opt label=disable --network host \
+    {{podman}} run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} copy --policy /work/verify.json --registries.d /work/regd --preserve-digests "${ma[@]}" "${tls[@]}" \
         "$src" dir:/tmp/verified
@@ -180,7 +180,7 @@ image-version source:
     authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
     printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
     tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--tls-verify=false)
-    podman run --rm --security-opt label=disable --network host \
+    {{podman}} run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} inspect "${tls[@]}" "docker://${dest}:{{source}}" \
         | jq -r '.Labels["version"] // .Labels["redhat.version-id"] // empty' | tr -d '\r\n'
@@ -197,14 +197,14 @@ release-promote version source:
     printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
     tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--src-tls-verify=false --dest-tls-verify=false)
     itls=(); [ "${SIGN_INSECURE:-}" = "true" ] && itls=(--tls-verify=false)
-    if podman run --rm --security-opt label=disable --network host \
+    if {{podman}} run --rm --security-opt label=disable --network host \
          -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
          {{skopeo_image}} inspect "${itls[@]}" --raw "docker://${dest}:{{version}}" >/dev/null 2>&1; then
         echo "${dest}:{{version}} already present — skipping promote"
         exit 0
     fi
     echo "Promoting ${dest}:{{source}} -> ${dest}:{{version}}"
-    podman run --rm --security-opt label=disable --network host \
+    {{podman}} run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} copy --all --preserve-digests "${tls[@]}" \
         "docker://${dest}:{{source}}" "docker://${dest}:{{version}}"
@@ -225,7 +225,7 @@ verify-image ref:
     printf '{"default":[{"type":"reject"}],"transports":{"docker":{"%s":[{"type":"sigstoreSigned","keyPath":"/work/pub","signedIdentity":{"type":"matchRepository"}}]}}}' "$repo" > "$work/verify.json"
     tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--src-tls-verify=false)
     echo "Verifying every instance of ${ref} against the committed public key"
-    podman run --rm --security-opt label=disable --network host \
+    {{podman}} run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} copy --multi-arch all --policy /work/verify.json --registries.d /work/regd "${tls[@]}" \
         "docker://${ref}" dir:/tmp/verified
