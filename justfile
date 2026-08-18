@@ -15,17 +15,11 @@ podman := "sudo podman"
 image:
     #!/usr/bin/env bash
     set -euo pipefail
-    args=()
-    while IFS= read -r l; do
-        [ -n "$l" ] && args+=(--label "$l" --annotation "$l")
-    done <<< "${LABELS:-}"
     {{podman}} build \
         --platform={{platform}} \
         --security-opt=label=disable \
         --cap-add=all \
         --device /dev/fuse \
-        --iidfile /tmp/image-id \
-        "${args[@]}" \
         -t {{image_name}} \
         -f {{version_major}}/Containerfile \
         .
@@ -37,25 +31,39 @@ rechunk:
     src="localhost/{{image_name}}:latest"
     rm -rf "{{rechunk_out}}"; mkdir -p "{{rechunk_out}}"
     {{podman}} volume rm -f rechunk_ostree >/dev/null 2>&1 || true
-    work="$(mktemp -d)"; trap 'rm -rf "$work"; {{podman}} volume rm -f rechunk_ostree >/dev/null 2>&1 || true' EXIT
+    work="$(mktemp -d)"; cref=""
+    cleanup() {
+        [ -n "$cref" ] && { {{podman}} unmount "$cref" >/dev/null 2>&1 || true; {{podman}} rm -f "$cref" >/dev/null 2>&1 || true; }
+        rm -rf "$work"
+        {{podman}} volume rm -f rechunk_ostree >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT
+    host="$(echo '{{image}}' | cut -d/ -f1)"
     if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GITHUB_ACTOR:-}" ]; then
         authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
-        printf '{"auths":{"%s":{"auth":"%s"}}}' "$(echo '{{image}}' | cut -d/ -f1)" "$authb64" > "$work/auth.json"
+        printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
     else
         printf '{}' > "$work/auth.json"
+    fi
+    prev="${PREV_REF:-}"
+    if [ -n "$prev" ]; then
+        {{podman}} run --rm --security-opt label=disable --network host -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+            {{skopeo_image}} inspect --raw "docker://$prev" >/dev/null 2>&1 || { echo "prev-ref $prev not found; building without it"; prev=""; }
     fi
     cref="$({{podman}} create "$src" bash)"
     mount="$({{podman}} mount "$cref")"
     {{podman}} run --rm --security-opt label=disable -v "$mount":/var/tree -e TREE=/var/tree -u 0:0 {{rechunk_image}} /sources/rechunk/1_prune.sh
     {{podman}} run --rm --security-opt label=disable -v "$mount":/var/tree -e TREE=/var/tree -v rechunk_ostree:/var/ostree -e REPO=/var/ostree/repo -e RESET_TIMESTAMP=1 -u 0:0 {{rechunk_image}} /sources/rechunk/2_create.sh
-    {{podman}} unmount "$cref"; {{podman}} rm "$cref"; {{podman}} rmi "$src"
+    {{podman}} unmount "$cref"; {{podman}} rm "$cref"; cref=""; {{podman}} rmi "$src"
     {{podman}} run --rm --security-opt label=disable \
         -v "{{rechunk_out}}":/workspace -v "$work:/work:Z" -v rechunk_ostree:/var/ostree \
         -e REPO=/var/ostree/repo -e REGISTRY_AUTH_FILE=/work/auth.json \
         -e OUT_NAME={{image_name}} -e OUT_REF="oci:{{image_name}}" -e VERSION_FN=/workspace/version.txt \
-        -e PREV_REF="${PREV_REF:-}" -e LABELS="${LABELS:-}" -e VERSION="${VERSION:-<date>}" \
+        -e PREV_REF="$prev" -e LABELS="${LABELS:-}" -e VERSION="${VERSION:-<date>}" \
         -u 0:0 {{rechunk_image}} /sources/rechunk/3_chunk.sh
     sudo chown -R "$(id -u):$(id -g)" "{{rechunk_out}}"
+    {{podman}} run --rm --security-opt label=disable -v "{{rechunk_out}}/{{image_name}}":/img:Z {{skopeo_image}} inspect --config oci:/img \
+        | jq -e '.config.Labels["containers.bootc"] == "1"' >/dev/null || { echo "rechunk output missing containers.bootc label" >&2; exit 1; }
     echo "Rechunked -> oci:{{rechunk_out}}/{{image_name}}"
 
 [group('publish')]
