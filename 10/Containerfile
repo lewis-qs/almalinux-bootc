@@ -29,6 +29,8 @@ FROM scratch
 
 COPY --from=builder /target-rootfs/ /
 
+COPY cosign.pub /usr/share/almalinux-bootc/cosign.pub
+
 LABEL containers.bootc 1
 LABEL ostree.bootable 1
 LABEL org.opencontainers.image.vendor AlmaLinux OS Foundation

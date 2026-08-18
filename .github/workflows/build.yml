@@ -22,20 +22,15 @@ on:
     # run every day at 03:00 UTC
     - cron:  '00 03 * * *'
 
-# REQUIRED: Set up permissions for OIDC token and KMS access
 permissions:
-  id-token: write
   contents: read
   packages: write
 
 env:
   LATEST_MAJOR: 9
-  IMAGE_NAME: almalinux-bootc
+  IMAGE_NAME: almalinux
+  IMAGE_REGISTRY: ghcr.io/lewis-qs/bootc
   VERSIONS_LIST: '"9", "10-kitten", "10"'
-  AWS_REGION: us-east-1
-  AWS_ROLE_ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/bootcimages
-  KMS_KEY_ALIAS: cloudsig
-  CHAT_CHANNEL: ${{ vars.MATTERMOST_CHANNEL }}
 
 jobs:
   set-versions-matrix:
@@ -98,12 +93,11 @@ jobs:
       with:
         VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
         DATE_STAMP: ${{ env.DATE_STAMP }}
-        IMAGE_REGISTRY: ${{ secrets.IMAGE_REGISTRY }}
-        REGISTRY_USER:  ${{ secrets.REGISTRY_USER }}
-        REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
-        KMS_KEY_ALIAS: ${{ env.KMS_KEY_ALIAS }}
-        AWS_ROLE_ARN: ${{ env.AWS_ROLE_ARN }}
-        AWS_REGION: ${{ env.AWS_REGION }}
+        IMAGE_REGISTRY: ${{ env.IMAGE_REGISTRY }}
+        REGISTRY_USER:  ${{ github.actor }}
+        REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        SIGSTORE_PRIVATE_KEY: ${{ secrets.SIGSTORE_PRIVATE_KEY }}
+        SIGSTORE_PASSPHRASE: ${{ secrets.SIGSTORE_PASSPHRASE }}
 
   push-manifest:
     if: ${{ always() && contains(join(needs.*.result, ','), 'success') }}
@@ -170,37 +164,50 @@ jobs:
           echo "vendor=$(echo ${DIGESTS_JSON} | jq -r '[.[] | .vendor] | unique | .[0]')" >> $GITHUB_OUTPUT
           echo "date=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)" >> $GITHUB_OUTPUT
 
-      - name: Login to registry (docker)
+      - name: Login to registry
         if: ${{ env.skip != 1 }}
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ secrets.IMAGE_REGISTRY }}
-          username: ${{ secrets.REGISTRY_USER }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+        env:
+          REGISTRY: ${{ env.IMAGE_REGISTRY }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          install -m 700 -d "$HOME/.docker"
+          printf '%s' "$REGISTRY_PASSWORD" | podman login --authfile "$HOME/.docker/config.json" --username "$REGISTRY_USER" --password-stdin "${REGISTRY%%/*}"
 
-      - name: Image Metadata
+      - name: Image metadata
         if: ${{ env.skip != 1 }}
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5
         id: metadata
-        with:
-          tags: |
-            type=raw,value=latest,enable=${{ matrix.VERSION_MAJOR == env.LATEST_MAJOR }}
-            type=raw,value=${{ matrix.VERSION_MAJOR }}
-            type=raw,value=${{ steps.check.outputs.version-id }},enable=${{ matrix.VERSION_MAJOR != '10-kitten' }}
-            type=raw,value=${{ steps.check.outputs.version-id }}-${{ env.DATE_STAMP }}
-            type=raw,value=${{ steps.check.outputs.long-version }}
-          labels: |
-            redhat.id=${{ steps.check.outputs.id }}
-            redhat.version-id=${{ steps.check.outputs.version-id }}
-            version=${{ steps.check.outputs.version-id }}
-            release=${{ steps.check.outputs.version-id }}
-            org.opencontainers.image.created=${{ steps.check.outputs.date }}
-            org.opencontainers.image.source=${{ github.repositoryUrl }}
-            org.opencontainers.image.title=${{ env.IMAGE_NAME }}
-            org.opencontainers.image.url=${{ github.event.repository.html_url }}
-            org.opencontainers.image.version=${{ steps.check.outputs.long-version }}
-            org.opencontainers.image.vendor=AlmaLinux OS Foundation
-            org.opencontainers.image.description=AlmaLinux Bootable Container Image
+        env:
+          VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
+          VERSION_ID: ${{ steps.check.outputs.version-id }}
+          LONG_VERSION: ${{ steps.check.outputs.long-version }}
+          ID: ${{ steps.check.outputs.id }}
+          CREATED: ${{ steps.check.outputs.date }}
+          SOURCE: ${{ github.repositoryUrl }}
+          URL: ${{ github.event.repository.html_url }}
+        run: |
+          tags=("$VERSION_MAJOR" "${VERSION_ID}-${DATE_STAMP}" "$LONG_VERSION")
+          [ "$VERSION_MAJOR" = "$LATEST_MAJOR" ] && tags+=("latest")
+          [ "$VERSION_MAJOR" != "10-kitten" ] && tags+=("$VERSION_ID")
+          {
+            echo 'tags<<EOF'
+            printf '%s\n' "${tags[@]}"
+            echo EOF
+            echo 'labels<<EOF'
+            printf '%s\n' \
+              "redhat.id=${ID}" \
+              "redhat.version-id=${VERSION_ID}" \
+              "version=${VERSION_ID}" \
+              "release=${VERSION_ID}" \
+              "org.opencontainers.image.created=${CREATED}" \
+              "org.opencontainers.image.source=${SOURCE}" \
+              "org.opencontainers.image.title=${IMAGE_NAME}" \
+              "org.opencontainers.image.url=${URL}" \
+              "org.opencontainers.image.version=${LONG_VERSION}" \
+              "org.opencontainers.image.vendor=AlmaLinux OS Foundation" \
+              "org.opencontainers.image.description=AlmaLinux Bootable Container Image"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
 
       - name: Get a newer podman (from debian trixie)
         if: ${{ env.skip != 1 }}
@@ -214,7 +221,7 @@ jobs:
         if: ${{ env.skip != 1 }}
         id: create-manifest
         run: |
-          IMAGE_DEST=${{ secrets.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_DEST=${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
           podman manifest create ${IMAGE_DEST}
           echo "MANIFEST=${IMAGE_DEST}" >> $GITHUB_OUTPUT
 
@@ -225,7 +232,7 @@ jobs:
           DIGESTS_JSON: ${{ steps.load-outputs.outputs.DIGESTS_JSON }}
           LABELS: ${{ steps.metadata.outputs.labels }}
         run: |
-          IMAGE_DEST=${{ secrets.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_DEST=${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
 
           for platform in $(echo $DIGESTS_JSON | jq -r '. | to_entries | .[].key'); do
             digest=$(echo $DIGESTS_JSON | jq -r ".[\"$platform\"].digest")
@@ -250,17 +257,17 @@ jobs:
           MANIFEST: ${{ steps.create-manifest.outputs.MANIFEST }}
           TAGS: ${{ steps.metadata.outputs.tags }}
         run: |
-          IMAGE_DEST=${{ secrets.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_DEST=${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
           while IFS= read -r tag; do
             for i in {1..5}; do
-              podman manifest push --all=false --digestfile=/tmp/digestfile $MANIFEST ${IMAGE_DEST}:$tag && break || sleep $((10*i))
+              podman manifest push --authfile "$HOME/.docker/config.json" --all=false --digestfile=/tmp/digestfile $MANIFEST ${IMAGE_DEST}:$tag && break || sleep $((10*i))
             done
             [ -f /tmp/digestfile ] || exit 1
           done <<< "$TAGS"
 
           DIGEST=$(cat /tmp/digestfile)
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          echo "image=${IMAGE_DEST}" >> $GITHUB_OUTPUT
+          echo "image-ref=${IMAGE_DEST}:$tag" >> $GITHUB_OUTPUT
 
           echo "Pushed manifest to ${IMAGE_DEST} with digest $DIGEST"
           podman manifest inspect ${IMAGE_DEST}
@@ -269,42 +276,9 @@ jobs:
         if: ${{ env.skip != 1 }}
         uses: ./.github/actions/sign
         with:
-          image-ref: ${{ steps.push_manifest.outputs.image }}@${{ steps.push_manifest.outputs.digest }}
-          KMS_KEY_ALIAS: ${{ env.KMS_KEY_ALIAS }}
-          AWS_ROLE_ARN: ${{ env.AWS_ROLE_ARN }}
-          AWS_REGION: ${{ env.AWS_REGION }}
-
-      - name: Format output for notification
-        if: ${{ env.skip != 1 }}
-        id: format
-        env:
-          DIGESTS_JSON: ${{ steps.load-outputs.outputs.DIGESTS_JSON }}
-          TAGS: ${{ steps.metadata.outputs.tags }}
-        run: |
-          echo "arches=$(echo "$DIGESTS_JSON" | jq -r '[keys[] | "linux/" + .] | sort | join(", ")')" >> $GITHUB_OUTPUT
-          # Add two spaces before each tag (starting from the second line) so that it is formatted correctly in the notification
-          {
-            echo 'tags<<EOF'
-            printf "$TAGS" | awk 'NR==1{print; next} {print "  " $0}'
-            echo EOF
-          } >> $GITHUB_OUTPUT
-
-      - name: Notify AlmaLinux Chat
-        if: ${{ env.skip != 1 }}
-        uses: mattermost/action-mattermost-notify@master
-        with:
-          MATTERMOST_WEBHOOK_URL: ${{ secrets.MM_WEBHOOK_URL }}
-          MATTERMOST_CHANNEL: ${{ env.CHAT_CHANNEL }}
-          MATTERMOST_USERNAME: 'github'
-          TEXT: |-
-            **AlmaLinux OS ${{ steps.check.outputs.version-id }}** Bootc Image, build `${{ steps.check.outputs.long-version }}`, built by [GitHub Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-            :almalinux: **${{ steps.push_manifest.outputs.image }}**
-            - Platforms:
-              ```
-              ${{ steps.format.outputs.arches }}
-              ```
-            - Tags:
-              ```
-              ${{ steps.format.outputs.tags }}
-              ```
+          image-ref: ${{ steps.push_manifest.outputs.image-ref }}
+          digest: ${{ steps.push_manifest.outputs.digest }}
+          multi-arch: index-only
+          public-key: ${{ github.workspace }}/cosign.pub
+          SIGSTORE_PRIVATE_KEY: ${{ secrets.SIGSTORE_PRIVATE_KEY }}
+          SIGSTORE_PASSPHRASE: ${{ secrets.SIGSTORE_PASSPHRASE }}

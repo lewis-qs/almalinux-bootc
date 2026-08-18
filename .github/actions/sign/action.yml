@@ -3,35 +3,74 @@ name: Sign image
 
 inputs:
   image-ref:
-    description: The full reference to the image to sign, including the hash
+    description: The tagged image reference the signature is attached to
     required: true
-  KMS_KEY_ALIAS:
-    description: The AWS KMS alias to use for signing
+  digest:
+    description: The manifest digest (sha256:...) that is signed and verified
+    required: true
+  multi-arch:
+    description: Pass "index-only" to sign a manifest list index
     required: false
-  AWS_ROLE_ARN:
-    description: The AWS role ARN to assume for signing
+    default: ''
+  public-key:
+    description: Path to the committed public key the signature is verified against
+    required: true
+  SIGSTORE_PRIVATE_KEY:
+    description: The sigstore private key (cosign format) to sign with
+    required: true
+  SIGSTORE_PASSPHRASE:
+    description: The passphrase for the sigstore private key (empty if none)
     required: false
-  AWS_REGION:
-    description: The AWS region to use for signing
-    required: false
+    default: ''
 
 runs:
   using: "composite"
   steps:
-    - name: Install Cosign
-      uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
-
-    - name: Configure AWS credentials
-      id: configure-aws
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        role-to-assume: ${{ inputs.AWS_ROLE_ARN }}
-        role-session-name: almalinux-container-signing-${{ github.run_id }}
-        aws-region: ${{ inputs.AWS_REGION }}
-        role-duration-seconds: 900  # 15 minutes, the minimum
-        mask-aws-account-id: true
-
-    - name: Sign Image with KMS
-      if: ${{ env.AWS_DEFAULT_REGION != '' }}
+    - name: Install skopeo
       shell: bash
-      run: cosign sign --yes --key awskms:///alias/${{ inputs.KMS_KEY_ALIAS }} ${{ inputs.image-ref }}
+      run: command -v skopeo >/dev/null || { sudo apt-get update && sudo apt-get install -y skopeo; }
+
+    - name: Sign image
+      shell: bash
+      env:
+        SIGSTORE_PRIVATE_KEY: ${{ inputs.SIGSTORE_PRIVATE_KEY }}
+        SIGSTORE_PASSPHRASE: ${{ inputs.SIGSTORE_PASSPHRASE }}
+        IMAGE_REF: ${{ inputs.image-ref }}
+        DIGEST: ${{ inputs.digest }}
+        MULTI_ARCH: ${{ inputs.multi-arch }}
+        PUBLIC_KEY: ${{ inputs.public-key }}
+      run: |
+        export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
+        install -m 700 -d "$HOME/.sigstore"
+        trap 'rm -f "$HOME/.sigstore/key.private" "$HOME/.sigstore/pass"' EXIT
+        printf '%s' "$SIGSTORE_PRIVATE_KEY" > "$HOME/.sigstore/key.private"
+        printf '%s' "$SIGSTORE_PASSPHRASE" > "$HOME/.sigstore/pass"
+        chmod 600 "$HOME/.sigstore/key.private" "$HOME/.sigstore/pass"
+
+        install -m 755 -d "$HOME/.config/containers/registries.d"
+        cat > "$HOME/.config/containers/registries.d/sign.yaml" <<EOF
+        docker:
+          ${IMAGE_REF%%/*}:
+            use-sigstore-attachments: true
+        EOF
+
+        REPO=${IMAGE_REF%:*}
+        SRC="docker://${REPO}@${DIGEST}"
+
+        MA=()
+        [ -n "$MULTI_ARCH" ] && MA=(--multi-arch "$MULTI_ARCH")
+
+        skopeo copy --preserve-digests "${MA[@]}" \
+          --sign-by-sigstore-private-key "$HOME/.sigstore/key.private" \
+          --sign-passphrase-file "$HOME/.sigstore/pass" \
+          "$SRC" "docker://${IMAGE_REF}"
+
+        cat > "$HOME/.sigstore/policy.json" <<EOF
+        {"default":[{"type":"reject"}],"transports":{"docker":{"${REPO}":[{"type":"sigstoreSigned","keyPath":"${PUBLIC_KEY}","signedIdentity":{"type":"matchRepository"}}]}}}
+        EOF
+
+        rm -rf "$HOME/.sigstore/verify"
+        skopeo copy --preserve-digests "${MA[@]}" \
+          --policy "$HOME/.sigstore/policy.json" \
+          "$SRC" "dir:$HOME/.sigstore/verify"
+        rm -rf "$HOME/.sigstore/verify"
