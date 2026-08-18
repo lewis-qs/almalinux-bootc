@@ -47,30 +47,10 @@ runs:
         printf '%s' "$SIGSTORE_PASSPHRASE" > "$HOME/.sigstore/pass"
         chmod 600 "$HOME/.sigstore/key.private" "$HOME/.sigstore/pass"
 
-        install -m 755 -d "$HOME/.config/containers/registries.d"
-        cat > "$HOME/.config/containers/registries.d/sign.yaml" <<EOF
-        docker:
-          ${IMAGE_REF%%/*}:
-            use-sigstore-attachments: true
-        EOF
-
-        REPO=${IMAGE_REF%:*}
-        SRC="docker://${REPO}@${DIGEST}"
-
-        MA=()
-        [ -n "$MULTI_ARCH" ] && MA=(--multi-arch "$MULTI_ARCH")
-
-        skopeo copy --preserve-digests "${MA[@]}" \
-          --sign-by-sigstore-private-key "$HOME/.sigstore/key.private" \
-          --sign-passphrase-file "$HOME/.sigstore/pass" \
-          "$SRC" "docker://${IMAGE_REF}"
-
-        cat > "$HOME/.sigstore/policy.json" <<EOF
-        {"default":[{"type":"reject"}],"transports":{"docker":{"${REPO}":[{"type":"sigstoreSigned","keyPath":"${PUBLIC_KEY}","signedIdentity":{"type":"matchRepository"}}]}}}
-        EOF
-
-        rm -rf "$HOME/.sigstore/verify"
-        skopeo copy --preserve-digests "${MA[@]}" \
-          --policy "$HOME/.sigstore/policy.json" \
-          "$SRC" "dir:$HOME/.sigstore/verify"
-        rm -rf "$HOME/.sigstore/verify"
+        make sign \
+          IMAGE_REF="$IMAGE_REF" \
+          DIGEST="$DIGEST" \
+          MULTI_ARCH="$MULTI_ARCH" \
+          PUBLIC_KEY="$PUBLIC_KEY" \
+          SIGN_KEY="$HOME/.sigstore/key.private" \
+          SIGN_PASS="$HOME/.sigstore/pass"
