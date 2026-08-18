@@ -21,50 +21,42 @@ Our images are based on the work done for [CentOS Bootc Base Images](https://git
 
 ## Building Images (Advanced)
 
-This repository uses `make` to build the images locally.
+This repository uses [`just`](https://just.systems) to build the images locally. Run `just --list` to see the available recipes.
 
 ### Prerequisites
 
-* `make`
+* `just`
 * A container runtime like `podman` or `docker` (ensure it's running and you have appropriate permissions).
 * Sufficient disk space and internet connectivity.
 
 ### Build Instructions
 
-The following examples demonstrate how to build specific variants:
+Build variables are passed as environment variables (`PLATFORM`, `VERSION_MAJOR`, `IMAGE_NAME`). The following examples demonstrate how to build specific variants:
 
 ### Example: AlmaLinux OS Kitten 10
 
 ```bash
-make \
-  PLATFORM=linux/amd64 \
-  IMAGE_NAME=almalinux-bootc \
-  VERSION_MAJOR=10-kitten
+PLATFORM=linux/amd64 VERSION_MAJOR=10-kitten just image
 ```
 
 ### Example: AlmaLinux OS 10 (x86_64-v2)
 
 ```bash
-make \
-  PLATFORM=linux/amd64/v2 \
-  IMAGE_NAME=almalinux-bootc \
-  VERSION_MAJOR=10-kitten
+PLATFORM=linux/amd64/v2 VERSION_MAJOR=10 just image
 ```
 
-  
 ### Example: AlmaLinux 9 (x86_64)
 
-```  
-make \  
-  PLATFORM=linux/amd64 \  
-  IMAGE_NAME=almalinux-bootc \  
-  VERSION_MAJOR=9  
+```bash
+PLATFORM=linux/amd64 VERSION_MAJOR=9 just image
 ```
+
+Then `just rechunk` (with the same `IMAGE_NAME`) to produce the final layered image.
 
 **Explanation of Build Variables:**
 
-* `PLATFORM`: Specifies the target architecture and variant (e.g., linux/amd64, linux/amd64/v2, linux/arm64).  
-* `IMAGE_NAME`: The base name for the output container image. (e.g. almalinux-bootc) 
+* `PLATFORM`: Specifies the target architecture and variant (e.g., linux/amd64, linux/amd64/v2, linux/arm64).
+* `IMAGE_NAME`: The base name for the output container image (defaults to `almalinux`).
 * `VERSION_MAJOR`: The AlmaLinux major version (e.g., 9, 10, 10-kitten).
 
 ## Contributing and Community

@@ -1,0 +1,42 @@
+---
+name: 'Setup just'
+description: Install a pinned, SHA-verified `just` from its GitHub release asset.
+
+inputs:
+  version:
+    description: 'just version to install (must have a pinned SHA256 below).'
+    required: false
+    default: '1.56.0'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Download, verify, and install just
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ARCH: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+        case "$ARCH" in
+          X64)   target=x86_64-unknown-linux-musl;  sha=fa2a8ec1015d9df5330941ade12437488fc40d33f9c9f8cd4eb70a26de11b639 ;;
+          ARM64) target=aarch64-unknown-linux-musl; sha=c8c1d656e9f47569ec1ae2bf8779af2621cdeea6bbbba3b0cacd64f951d25e2b ;;
+          *) echo "::error::setup-just: unsupported runner arch '$ARCH'"; exit 1 ;;
+        esac
+        dir="$HOME/.local/share/setup-just/$VERSION"
+        url="https://github.com/casey/just/releases/download/${VERSION}/just-${VERSION}-${target}.tar.gz"
+        mkdir -p "$dir"
+        for attempt in 1 2 3 4 5; do
+          curl --proto '=https' --tlsv1.2 -fsSL "$url" -o /tmp/just.tar.gz && break
+          [ "$attempt" -eq 5 ] && { echo "::error::setup-just: download failed after 5 attempts: $url"; exit 1; }
+          echo "::warning::setup-just: download attempt $attempt failed; retrying in $((attempt * 5))s"
+          sleep "$((attempt * 5))"
+        done
+        echo "${sha}  /tmp/just.tar.gz" | sha256sum -c -
+        tar -xzf /tmp/just.tar.gz -C "$dir" just
+        rm -f /tmp/just.tar.gz
+        echo "$dir" >> "$GITHUB_PATH"
+        if command -v sudo >/dev/null 2>&1 && [ -d /usr/local/bin ]; then
+          sudo ln -sf "$dir/just" /usr/local/bin/just
+        fi
+        "$dir/just" --version
