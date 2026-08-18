@@ -44,11 +44,9 @@ sign:
 	repo="$${ref%:*}"
 	src="docker://$${repo}@$${dig}"
 	flag=""; [ -n "$$ma" ] && flag="--multi-arch $$ma"
-	regd="$$(mktemp -d)"
+	regd="$$(mktemp -d)"; policy="$$(mktemp)"; verify="$$(mktemp -d)"
+	trap 'rm -rf "$$regd" "$$policy" "$$verify"' EXIT
 	printf 'docker:\n  %s:\n    use-sigstore-attachments: true\n' "$${ref%%/*}" > "$$regd/sign.yaml"
-	policy="$$(mktemp)"
 	printf '{"default":[{"type":"reject"}],"transports":{"docker":{"%s":[{"type":"sigstoreSigned","keyPath":"%s","signedIdentity":{"type":"matchRepository"}}]}}}' "$$repo" "$$pub" > "$$policy"
 	$(SKOPEO) --registries.d "$$regd" copy --preserve-digests $$flag --sign-by-sigstore-private-key "$$key" --sign-passphrase-file "$$pass" "$$src" "docker://$$ref"
-	verify="$$(mktemp -d)"
 	$(SKOPEO) --registries.d "$$regd" copy --preserve-digests $$flag --policy "$$policy" "$$src" "dir:$$verify"
-	rm -rf "$$regd" "$$policy" "$$verify"
