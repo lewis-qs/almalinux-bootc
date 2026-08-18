@@ -58,18 +58,6 @@ runs:
         echo "res=${res}" >> "$GITHUB_ENV"
         echo "Exit code: '$res'"
 
-    - name: Get info
-      id: info
-      if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
-      shell: bash
-      run: |
-        INFO=$(sudo podman run ${{ env.VARIANT }} --quiet --rm quay.io/almalinuxorg/${{ inputs.VERSION_MAJOR }}-base bash -c "dnf upgrade -y almalinux-release && rpm -q almalinux-gpg-keys && cat /etc/os-release" || true)
-        echo "$INFO"
-
-        echo "id=$(echo "$INFO" | grep "^ID=" | cut -d'=' -f2 | tr -d '"')" >> $GITHUB_OUTPUT
-        echo "version-id=$(echo "$INFO" | grep "^VERSION_ID=" | cut -d'=' -f2 | tr -d '"')" >> $GITHUB_OUTPUT
-        echo "long-version=$(echo "$INFO" | grep "^VERSION_ID=" | cut -d'=' -f2 | tr -d '"').${{ inputs.DATE_STAMP }}.0" >> $GITHUB_OUTPUT
-
     - name: Build image
       id: build
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
@@ -78,45 +66,17 @@ runs:
         PLATFORM: ${{ env.PLATFORM }}
         VERSION_MAJOR: ${{ inputs.VERSION_MAJOR }}
         IMAGE_NAME: ${{ env.IMAGE_NAME }}
-      run: |
-        BUILD_TIME=$(date -Iseconds)
-        LABELS=$(cat <<EOF
-        redhat.id=${{ steps.info.outputs.id }}
-        redhat.version-id=${{ steps.info.outputs.version-id }}
-        version=${{ steps.info.outputs.version-id }}
-        release=${{ steps.info.outputs.version-id }}
-        build-date=${BUILD_TIME}
-        org.opencontainers.image.created=${BUILD_TIME}
-        org.opencontainers.image.version=${{ steps.info.outputs.long-version }}
-        org.opencontainers.image.source=${{ github.repositoryUrl }}
-        org.opencontainers.image.title=${{ env.IMAGE_NAME }}
-        org.opencontainers.image.url=${{ github.event.repository.html_url }}
-        EOF
-        )
-        export LABELS
-        just image
-        echo "image-id=$(cat /tmp/image-id)" >> $GITHUB_OUTPUT
-
-    - name: rechunk image
-      id: rechunk
-      if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
-      shell: bash
-      env:
-        IMAGE_NAME: ${{ env.IMAGE_NAME }}
-      run: |
-        just rechunk
-        echo "image-id=sha256:$(sudo podman image inspect ${{ env.IMAGE_NAME }} -f "{{.Id}}")" >> $GITHUB_OUTPUT
+      run: just image
 
     - name: Run Image
       id: run
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
       shell: bash
-      env:
-        IMAGE_ID: ${{ steps.rechunk.outputs.image-id }}
       run: |
-        sudo podman run ${{ env.VARIANT }} --rm -ti ${{ env.IMAGE_ID }} bootc --version
+        IMAGE="localhost/${{ env.IMAGE_NAME }}:latest"
+        sudo podman run ${{ env.VARIANT }} --rm -ti "$IMAGE" bootc --version
 
-        INFO=$(sudo podman run ${{ env.VARIANT }} --rm ${{ env.IMAGE_ID }} bash -c "rpm -q almalinux-gpg-keys && cat /etc/os-release")
+        INFO=$(sudo podman run ${{ env.VARIANT }} --rm "$IMAGE" bash -c "rpm -q almalinux-gpg-keys && cat /etc/os-release")
         echo "$INFO"
 
         echo "id=$(echo "$INFO" | grep "^ID=" | cut -d'=' -f2 | tr -d '"')" >> $GITHUB_OUTPUT
@@ -124,12 +84,42 @@ runs:
         echo "long-version=$(echo "$INFO" | grep "^VERSION_ID=" | cut -d'=' -f2 | tr -d '"').${{ inputs.DATE_STAMP }}.0" >> $GITHUB_OUTPUT
         echo "vendor=$(echo "$INFO" | grep "^VENDOR_NAME=" | cut -d'=' -f2 | tr -d '"')" >> $GITHUB_OUTPUT
 
+    - name: Rechunk image
+      id: rechunk
+      if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
+      shell: bash
+      env:
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        IMAGE_REGISTRY: ${{ inputs.IMAGE_REGISTRY }}
+        VERSION: ${{ steps.run.outputs.long-version }}
+        PREV_REF: ${{ inputs.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.VERSION_MAJOR }}
+        GITHUB_ACTOR: ${{ inputs.GITHUB_ACTOR }}
+        GHCR_TOKEN: ${{ inputs.GHCR_TOKEN }}
+      run: |
+        BUILD_TIME=$(date -Iseconds)
+        LABELS=$(cat <<EOF
+        redhat.id=${{ steps.run.outputs.id }}
+        redhat.version-id=${{ steps.run.outputs.version-id }}
+        version=${{ steps.run.outputs.version-id }}
+        release=${{ steps.run.outputs.version-id }}
+        build-date=${BUILD_TIME}
+        org.opencontainers.image.created=${BUILD_TIME}
+        org.opencontainers.image.version=${{ steps.run.outputs.long-version }}
+        org.opencontainers.image.source=${{ github.repositoryUrl }}
+        org.opencontainers.image.title=${{ env.IMAGE_NAME }}
+        org.opencontainers.image.url=${{ github.event.repository.html_url }}
+        containers.bootc=1
+        ostree.bootable=1
+        EOF
+        )
+        export LABELS
+        just rechunk
+
     - name: Push and sign
       id: push
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
       shell: bash
       env:
-        IMAGE_ID: ${{ steps.rechunk.outputs.image-id }}
         VERSION: ${{ steps.run.outputs.version-id }}
         GITHUB_ACTOR: ${{ inputs.GITHUB_ACTOR }}
         GHCR_TOKEN: ${{ inputs.GHCR_TOKEN }}
@@ -137,7 +127,7 @@ runs:
         SIGSTORE_PASSPHRASE: ${{ inputs.SIGSTORE_PASSPHRASE }}
       run: |
         REF="${IMAGE_DEST}:${VERSION}-${{ inputs.DATE_STAMP }}-${CLEAN_ARCH}"
-        just push-image "$REF" "$IMAGE_ID"
+        just push-image "$REF" "/tmp/rechunk/${{ env.IMAGE_NAME }}"
         echo "digest=$(cat /tmp/digestfile)" >> $GITHUB_OUTPUT
 
     - name: Create Job Outputs
@@ -153,8 +143,7 @@ runs:
           --arg version "${{ steps.run.outputs.version-id }}" \
           --arg long_version "${{ steps.run.outputs.long-version }}" \
           --arg vendor "${{ steps.run.outputs.vendor }}" \
-          --arg image_id "${{ steps.rechunk.outputs.image-id }}" \
-          '{($platform): {digest: $digest, id: $id, version: $version, major: $major, long_version: $long_version, vendor: $vendor, image_id: $image_id}}' \
+          '{($platform): {digest: $digest, id: $id, version: $version, major: $major, long_version: $long_version, vendor: $vendor}}' \
           > /tmp/outputs/digests/${{ env.IMAGE_NAME }}_${{ matrix.VERSION_MAJOR }}_${{ env.CLEAN_ARCH }}.json
 
         cat /tmp/outputs/digests/${{ env.IMAGE_NAME }}_${{ matrix.VERSION_MAJOR }}_${{ env.CLEAN_ARCH }}.json
