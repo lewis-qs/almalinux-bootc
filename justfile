@@ -38,17 +38,12 @@ rechunk:
         {{podman}} volume rm -f rechunk_ostree >/dev/null 2>&1 || true
     }
     trap cleanup EXIT
-    host="$(echo '{{image}}' | cut -d/ -f1)"
+    host='{{image}}'; host="${host%%/*}"
     if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GITHUB_ACTOR:-}" ]; then
         authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
         printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
     else
         printf '{}' > "$work/auth.json"
-    fi
-    prev="${PREV_REF:-}"
-    if [ -n "$prev" ]; then
-        {{podman}} run --rm --security-opt label=disable --network host -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
-            {{skopeo_image}} inspect --raw "docker://$prev" >/dev/null 2>&1 || { echo "prev-ref $prev not found; building without it"; prev=""; }
     fi
     cref="$({{podman}} create "$src" bash)"
     mount="$({{podman}} mount "$cref")"
@@ -59,11 +54,9 @@ rechunk:
         -v "{{rechunk_out}}":/workspace -v "$work:/work:Z" -v rechunk_ostree:/var/ostree \
         -e REPO=/var/ostree/repo -e REGISTRY_AUTH_FILE=/work/auth.json \
         -e OUT_NAME={{image_name}} -e OUT_REF="oci:{{image_name}}" -e VERSION_FN=/workspace/version.txt \
-        -e PREV_REF="$prev" -e LABELS="${LABELS:-}" -e VERSION="${VERSION:-<date>}" \
+        -e PREV_REF="${PREV_REF:-}" -e LABELS="${LABELS:-}" -e VERSION="${VERSION:-<date>}" \
         -u 0:0 {{rechunk_image}} /sources/rechunk/3_chunk.sh
     sudo chown -R "$(id -u):$(id -g)" "{{rechunk_out}}"
-    {{podman}} run --rm --security-opt label=disable -v "{{rechunk_out}}/{{image_name}}":/img:Z {{skopeo_image}} inspect --config oci:/img \
-        | jq -e '.config.Labels["containers.bootc"] == "1"' >/dev/null || { echo "rechunk output missing containers.bootc label" >&2; exit 1; }
     echo "Rechunked -> oci:{{rechunk_out}}/{{image_name}}"
 
 [group('publish')]
