@@ -31,7 +31,7 @@ rechunk:
     labels=()
     while IFS= read -r l; do [ -n "$l" ] && labels+=(-l "$l"); done <<< "${LABELS:-}"
     {{podman}} run --rm --privileged --security-opt=label=disable \
-        -v /var/lib/containers:/var/lib/containers:z \
+        -v /var/lib/containers:/var/lib/containers \
         {{rechunk_image}} \
         rpm-ostree compose build-chunked-oci --bootc --format-version=1 \
         --from="$src" --output="containers-storage:localhost/rechunked-{{image_name}}:latest" \
@@ -44,11 +44,12 @@ rechunk:
 push-image ref image_id:
     #!/usr/bin/env bash
     set -euo pipefail
-    rm -f /tmp/digestfile
+    sudo rm -f /tmp/digestfile
     for i in 1 2 3 4 5; do
         {{podman}} push --authfile "$HOME/.docker/config.json" --digestfile=/tmp/digestfile {{image_id}} "docker://{{ref}}" && break || sleep $((10 * i))
     done
-    [ -f /tmp/digestfile ]
+    sudo test -s /tmp/digestfile
+    sudo chown "$(id -u):$(id -g)" /tmp/digestfile
     just sign-image '{{ref}}' "$(cat /tmp/digestfile)"
 
 [group('publish')]
