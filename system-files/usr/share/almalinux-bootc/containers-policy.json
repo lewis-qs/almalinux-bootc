@@ -1,0 +1,20 @@
+{
+    "default": [
+        {
+            "type": "insecureAcceptAnything"
+        }
+    ],
+    "transports": {
+        "docker": {
+            "ghcr.io/lewis-qs/bootc/almalinux": [
+                {
+                    "type": "sigstoreSigned",
+                    "keyPath": "/usr/share/almalinux-bootc/cosign.pub",
+                    "signedIdentity": {
+                        "type": "matchRepository"
+                    }
+                }
+            ]
+        }
+    }
+}
