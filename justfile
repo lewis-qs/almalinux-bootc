@@ -7,8 +7,7 @@ version_major := env_var_or_default("VERSION_MAJOR", "10")
 platform := env_var_or_default("PLATFORM", "linux/amd64")
 public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable@sha256:8870d39b1f18e6421da42aa13e562ce61cc58f230d238f4a905efe959ff8f491")
-rechunk_image := env_var_or_default("RECHUNK_IMAGE", "ghcr.io/hhd-dev/rechunk:v1.2.4")
-rechunk_out := "/tmp/rechunk"
+rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
 podman := "sudo podman"
 
 [group('build')]
@@ -29,55 +28,28 @@ rechunk:
     #!/usr/bin/env bash
     set -euo pipefail
     src="localhost/{{image_name}}:latest"
-    rm -rf "{{rechunk_out}}"; mkdir -p "{{rechunk_out}}"
-    {{podman}} volume rm -f rechunk_ostree >/dev/null 2>&1 || true
-    work="$(mktemp -d)"; cref=""
-    cleanup() {
-        [ -n "$cref" ] && { {{podman}} unmount "$cref" >/dev/null 2>&1 || true; {{podman}} rm -f "$cref" >/dev/null 2>&1 || true; }
-        rm -rf "$work"
-        {{podman}} volume rm -f rechunk_ostree >/dev/null 2>&1 || true
-    }
-    trap cleanup EXIT
-    host='{{image}}'; host="${host%%/*}"
-    if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GITHUB_ACTOR:-}" ]; then
-        authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
-        printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
-    else
-        printf '{}' > "$work/auth.json"
-    fi
-    cref="$({{podman}} create "$src" bash)"
-    mount="$({{podman}} mount "$cref")"
-    {{podman}} run --rm --security-opt label=disable -v "$mount":/var/tree -e TREE=/var/tree -u 0:0 {{rechunk_image}} /sources/rechunk/1_prune.sh
-    {{podman}} run --rm --security-opt label=disable -v "$mount":/var/tree -e TREE=/var/tree -v rechunk_ostree:/var/ostree -e REPO=/var/ostree/repo -e RESET_TIMESTAMP=1 -u 0:0 {{rechunk_image}} /sources/rechunk/2_create.sh
-    {{podman}} unmount "$cref"; {{podman}} rm "$cref"; cref=""; {{podman}} rmi "$src"
-    {{podman}} run --rm --security-opt label=disable \
-        -v "{{rechunk_out}}":/workspace -v "$work:/work:Z" -v rechunk_ostree:/var/ostree \
-        -e REPO=/var/ostree/repo -e REGISTRY_AUTH_FILE=/work/auth.json \
-        -e OUT_NAME={{image_name}} -e OUT_REF="oci:{{image_name}}" -e VERSION_FN=/workspace/version.txt \
-        -e PREV_REF="${PREV_REF:-}" -e LABELS="${LABELS:-}" -e VERSION="${VERSION:-<date>}" \
-        -u 0:0 {{rechunk_image}} /sources/rechunk/3_chunk.sh
-    sudo chown -R "$(id -u):$(id -g)" "{{rechunk_out}}"
-    echo "Rechunked -> oci:{{rechunk_out}}/{{image_name}}"
+    labels=()
+    while IFS= read -r l; do [ -n "$l" ] && labels+=(-l "$l"); done <<< "${LABELS:-}"
+    {{podman}} run --rm --privileged --security-opt=label=disable \
+        -v /var/lib/containers:/var/lib/containers:z \
+        {{rechunk_image}} \
+        rpm-ostree compose build-chunked-oci --bootc --format-version=1 \
+        --from="$src" --output="containers-storage:localhost/rechunked-{{image_name}}:latest" \
+        "${labels[@]}"
+    {{podman}} tag localhost/rechunked-{{image_name}}:latest "$src"
+    {{podman}} rmi localhost/rechunked-{{image_name}}:latest
+    echo "Rechunked $src"
 
 [group('publish')]
-push-image ref oci_dir:
+push-image ref image_id:
     #!/usr/bin/env bash
     set -euo pipefail
-    : "${GHCR_TOKEN:?push-image needs GHCR_TOKEN}"
-    : "${GITHUB_ACTOR:?push-image needs GITHUB_ACTOR}"
-    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-    ref='{{ref}}'; host="${ref%%/*}"
-    authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
-    printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
-    tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--dest-tls-verify=false)
+    rm -f /tmp/digestfile
     for i in 1 2 3 4 5; do
-        {{podman}} run --rm --security-opt label=disable --network host \
-            -v '{{oci_dir}}':/img:Z -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
-            {{skopeo_image}} copy --digestfile=/work/digestfile "${tls[@]}" oci:/img "docker://${ref}" && break || sleep $((10 * i))
+        {{podman}} push --authfile "$HOME/.docker/config.json" --digestfile=/tmp/digestfile {{image_id}} "docker://{{ref}}" && break || sleep $((10 * i))
     done
-    sudo test -s "$work/digestfile"
-    sudo cat "$work/digestfile" > /tmp/digestfile
-    just sign-image "$ref" "$(cat /tmp/digestfile)"
+    [ -f /tmp/digestfile ]
+    just sign-image '{{ref}}' "$(cat /tmp/digestfile)"
 
 [group('publish')]
 push-manifest:

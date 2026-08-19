@@ -90,11 +90,6 @@ runs:
       shell: bash
       env:
         IMAGE_NAME: ${{ env.IMAGE_NAME }}
-        IMAGE_REGISTRY: ${{ inputs.IMAGE_REGISTRY }}
-        VERSION: ${{ steps.run.outputs.long-version }}
-        PREV_REF: ${{ inputs.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.VERSION_MAJOR }}
-        GITHUB_ACTOR: ${{ inputs.GITHUB_ACTOR }}
-        GHCR_TOKEN: ${{ inputs.GHCR_TOKEN }}
       run: |
         BUILD_TIME=$(date -Iseconds)
         LABELS=$(cat <<EOF
@@ -127,7 +122,7 @@ runs:
         SIGSTORE_PASSPHRASE: ${{ inputs.SIGSTORE_PASSPHRASE }}
       run: |
         REF="${IMAGE_DEST}:${VERSION}-${{ inputs.DATE_STAMP }}-${CLEAN_ARCH}"
-        just push-image "$REF" "/tmp/rechunk/${{ env.IMAGE_NAME }}"
+        just push-image "$REF" "localhost/${{ env.IMAGE_NAME }}:latest"
         echo "digest=$(cat /tmp/digestfile)" >> $GITHUB_OUTPUT
 
     - name: Create Job Outputs
