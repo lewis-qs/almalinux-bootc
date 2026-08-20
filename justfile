@@ -4,23 +4,27 @@ image_name := env_var_or_default("IMAGE_NAME", "almalinux")
 registry := env_var_or_default("IMAGE_REGISTRY", "ghcr.io/lewis-qs/bootc")
 image := registry + "/" + image_name
 version_major := env_var_or_default("VERSION_MAJOR", "10")
+variant := env_var_or_default("VARIANT", "")
 platform := env_var_or_default("PLATFORM", "linux/amd64")
 public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest")
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
 podman := "sudo podman"
 
+# build the base image, or a variant (e.g. `just image gnome`) from Containerfile.<variant>
 [group('build')]
-image:
+image var=variant:
     #!/usr/bin/env bash
     set -euo pipefail
+    cf="{{version_major}}/Containerfile"
+    [ -n "{{ var }}" ] && cf="{{version_major}}/Containerfile.{{ var }}"
     {{podman}} build \
         --platform={{platform}} \
         --security-opt=label=disable \
         --cap-add=all \
         --device /dev/fuse \
         -t {{image_name}} \
-        -f {{version_major}}/Containerfile \
+        -f "$cf" \
         .
 
 [group('build')]

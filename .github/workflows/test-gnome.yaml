@@ -1,0 +1,98 @@
+name: Test GNOME images
+
+on:
+  pull_request:
+    paths:
+      - "9/almalinux-9-gnome.yaml"
+      - "9/Containerfile.gnome"
+      - "10/almalinux-10-gnome.yaml"
+      - "10/Containerfile.gnome"
+      - "10-kitten/almalinux-10-kitten-gnome.yaml"
+      - "10-kitten/Containerfile.gnome"
+      - "system-files/**"
+      - "cosign.pub"
+      - "justfile"
+      - ".github/workflows/test-gnome.yaml"
+  workflow_dispatch:
+    inputs:
+      VERSION_MAJOR:
+        description: "Version dir to build (or ALL)"
+        required: true
+        default: "ALL"
+        type: choice
+        options:
+          - "ALL"
+          - "9"
+          - "10"
+          - "10-kitten"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: almalinux-bootc-gnome
+
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      versions: ${{ steps.set.outputs.versions }}
+    steps:
+      - id: set
+        env:
+          EVENT: ${{ github.event_name }}
+          SEL: ${{ inputs.VERSION_MAJOR }}
+        run: |
+          if [[ "$EVENT" == "workflow_dispatch" && "$SEL" != "ALL" ]]; then
+            echo "versions=$(jq -cn --arg v "$SEL" '[$v]')" >> "$GITHUB_OUTPUT"
+          else
+            echo 'versions=["9","10","10-kitten"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: gnome ${{ matrix.VERSION_MAJOR }} ${{ matrix.ARCH }}
+    needs: matrix
+    runs-on: ${{ matrix.ARCH == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        VERSION_MAJOR: ${{ fromJSON(needs.matrix.outputs.versions) }}
+        ARCH: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-just
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Build GNOME image
+        env:
+          PLATFORM: linux/${{ matrix.ARCH }}
+          VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
+        run: just image gnome
+
+      - name: Smoke checks
+        env:
+          IMG: ${{ env.IMAGE_NAME }}:latest
+        run: |
+          set -euo pipefail
+          sudo podman run --rm --entrypoint /bin/bash "$IMG" -c '
+            set -euo pipefail
+            rpm -q gnome-shell gdm plymouth clevis-dracut
+            test -f /usr/share/almalinux-bootc/cosign.pub
+            test -d /usr/lib/modules
+            test -f /usr/lib/bootc/install/20-rhel.toml
+            readlink -f /usr/lib/systemd/system/default.target | grep -q graphical.target
+            bootc container lint
+            echo "packages=$(rpm -qa | wc -l)"
+          '
