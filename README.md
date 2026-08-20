@@ -4,9 +4,11 @@
 
 ## Available Pre-built Images
 
-Official pre-built experimental images are available on Quay.io:
+Signed, pre-built images are published to the GitHub Container Registry:
 
-* **[quay.io/almalinuxorg/almalinux-bootc](https://quay.io/repository/almalinuxorg/almalinux-bootc?tab=tags)**
+* **`ghcr.io/lewis-qs/bootc/almalinux`** (tags: `9`, `10`, `10-kitten`, and dated release tags)
+
+Images are signed with sigstore; the public key ships in each image at `/usr/share/almalinux-bootc/cosign.pub` and is enforced on update via the container policy shipped in `/usr`.
 
 This project provides tooling to build experimental AlmaLinux bootable container images. These images leverage the [bootc project](https://containers.github.io/bootc/), which enables the creation of bootable OS images from container images.
 
