@@ -6,7 +6,7 @@ image := registry + "/" + image_name
 version_major := env_var_or_default("VERSION_MAJOR", "10")
 platform := env_var_or_default("PLATFORM", "linux/amd64")
 public_key := "cosign.pub"
-skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable@sha256:90d96d24a52c2da1d85150f984ea4e74cd01fdb4b7e1b83f10c64c346a38fbb3")
+skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest")
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
 podman := "sudo podman"
 
@@ -114,7 +114,8 @@ sign-image ref digest multi_arch="":
     {{podman}} run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} copy --policy /work/verify.json --registries.d /work/regd --preserve-digests "${ma[@]}" "${tls[@]}" \
-        "$src" dir:/tmp/verified
+        "$src" dir:/tmp/verified \
+        || { echo "verify failed; skopeo runs unpinned ({{skopeo_image}}) — check whether a skopeo update introduced a breaking change" >&2; exit 1; }
     echo "Signed + verified ${ref} @ {{digest}}"
 
 [group('auth')]
@@ -201,5 +202,6 @@ verify-image ref:
     {{podman}} run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} copy --multi-arch all --policy /work/verify.json --registries.d /work/regd "${tls[@]}" \
-        "docker://${ref}" dir:/tmp/verified
+        "docker://${ref}" dir:/tmp/verified \
+        || { echo "verify failed; skopeo runs unpinned ({{skopeo_image}}) — check whether a skopeo update introduced a breaking change" >&2; exit 1; }
     echo "VERIFIED all instances of ${ref}"
