@@ -1,0 +1,93 @@
+# PR / manual smoke builds for minimal variants. No registry push, no signing, no secrets.
+name: Test minimal images
+
+on:
+  pull_request:
+    paths:
+      - "9/almalinux-9-minimal.yaml"
+      - "9/Containerfile.minimal"
+      - "10/almalinux-10-minimal.yaml"
+      - "10/Containerfile.minimal"
+      - "10-kitten/almalinux-10-kitten-minimal.yaml"
+      - "10-kitten/Containerfile.minimal"
+      - "system-files/**"
+      - "cosign.pub"
+      - "justfile"
+      - ".github/workflows/test-minimal.yaml"
+  workflow_dispatch:
+    inputs:
+      VERSION_MAJOR:
+        description: "Version dir to build (or ALL)"
+        required: true
+        default: "ALL"
+        type: choice
+        options:
+          - "ALL"
+          - "9"
+          - "10"
+          - "10-kitten"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: almalinux-bootc-minimal
+
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      versions: ${{ steps.set.outputs.versions }}
+    steps:
+      - id: set
+        env:
+          EVENT: ${{ github.event_name }}
+          SEL: ${{ inputs.VERSION_MAJOR }}
+        run: |
+          if [[ "$EVENT" == "workflow_dispatch" && "$SEL" != "ALL" ]]; then
+            echo "versions=$(jq -cn --arg v "$SEL" '[$v]')" >> "$GITHUB_OUTPUT"
+          else
+            echo 'versions=["9","10","10-kitten"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: minimal ${{ matrix.VERSION_MAJOR }} ${{ matrix.ARCH }}
+    needs: matrix
+    runs-on: ${{ matrix.ARCH == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        VERSION_MAJOR: ${{ fromJSON(needs.matrix.outputs.versions) }}
+        ARCH: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-just
+
+      - name: Build minimal image
+        env:
+          PLATFORM: linux/${{ matrix.ARCH }}
+          VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
+        run: just image minimal
+
+      - name: Smoke checks
+        env:
+          IMG: ${{ env.IMAGE_NAME }}:latest
+        run: |
+          set -euo pipefail
+          sudo podman run --rm --entrypoint /bin/bash "$IMG" -c '
+            set -euo pipefail
+            test -f /usr/bin/bootc
+            test -f /usr/share/almalinux-bootc/cosign.pub
+            test "$(readlink -f /etc/containers/policy.json)" = /usr/share/almalinux-bootc/containers-policy.json
+            test -d /usr/lib/modules
+            test -f /usr/lib/bootc/install/20-rhel.toml
+            grep -q "root-fs-type = \"xfs\"" /usr/lib/bootc/install/20-rhel.toml
+            rpm -q almalinux-repos || rpm -q almalinux-kitten-repos
+            bootc container lint
+            echo "packages=$(rpm -qa | wc -l)"
+          '
