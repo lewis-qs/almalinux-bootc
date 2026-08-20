@@ -1,0 +1,3 @@
+docker:
+  ghcr.io/lewis-qs/bootc/almalinux:
+    use-sigstore-attachments: true

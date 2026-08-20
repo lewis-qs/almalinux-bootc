@@ -19,6 +19,10 @@ COPY --from=builder /target-rootfs/ /
 
 COPY cosign.pub /usr/share/almalinux-bootc/cosign.pub
 
+COPY system-files/ /
+
+RUN systemd-tmpfiles --create /usr/lib/tmpfiles.d/almalinux-bootc-signing.conf
+
 LABEL containers.bootc 1
 LABEL ostree.bootable 1
 LABEL org.opencontainers.image.vendor AlmaLinux OS Foundation
