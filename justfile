@@ -143,6 +143,28 @@ sigstore-keygen:
     echo "Private key: $out/sigstore.private"
     echo "Set GH secret SIGSTORE_PRIVATE_KEY from it and back it up, then: rm -rf $out"
 
+# the previous released tag for a major (empty if none), for release-note diffs
+[private]
+[group('release')]
+previous-release major current:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${GHCR_TOKEN:?previous-release needs GHCR_TOKEN}"
+    : "${GITHUB_ACTOR:?previous-release needs GITHUB_ACTOR}"
+    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+    dest='{{image}}'; host="${dest%%/*}"
+    authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
+    printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
+    tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--tls-verify=false)
+    case '{{ major }}' in
+      10-kitten) pat='^10-kitten-[0-9]{8}$' ;;
+      *) pat='^{{ major }}\.[0-9]+-[0-9]{8}$' ;;
+    esac
+    tags="$({{podman}} run --rm --security-opt label=disable --network host \
+        -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+        {{skopeo_image}} list-tags "${tls[@]}" "docker://${dest}" | jq -r '.Tags[]')"
+    printf '%s\n' "$tags" | grep -E "$pat" | grep -vx '{{ current }}' | sort -V | tail -1 || true
+
 [group('release')]
 image-version source:
     #!/usr/bin/env bash
