@@ -66,22 +66,43 @@ jobs:
           just release-promote "$VERSION" "$MAJOR"
           just verify-image "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
 
+      - name: Find previous release
+        id: prev
+        if: ${{ env.DRY_RUN != 'true' }}
+        continue-on-error: true
+        env:
+          MAJOR: ${{ matrix.VERSION_MAJOR }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          out="$(just previous-release "$MAJOR" "$VERSION")"
+          echo "version=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Diff release notes
+        id: notes
+        if: ${{ env.DRY_RUN != 'true' && steps.prev.outputs.version != '' }}
+        continue-on-error: true
+        uses: lewis-qs/driftah@e9a0e52657d79816323ce5ab0cbad88f68af6ab9 # v1
+        with:
+          from: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prev.outputs.version }}
+          to: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
+          args: --ignore-packages kernel
+
       - name: Create GitHub Release
         if: ${{ env.DRY_RUN != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
           MAJOR: ${{ matrix.VERSION_MAJOR }}
+          NOTES: ${{ steps.notes.outputs.notes }}
         run: |
           ref="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
           if gh release view "$VERSION" >/dev/null 2>&1; then
             echo "Release $VERSION already exists — skipping"
             exit 0
           fi
-          gh release create "$VERSION" \
-            --title "AlmaLinux ${MAJOR} — ${VERSION}" \
-            --notes "\`\`\`
-          podman pull ${ref}
-          \`\`\`
-
-          Signed with the sigstore key in \`cosign.pub\`."
+          {
+            if [ -n "${NOTES:-}" ]; then printf '%s\n\n' "$NOTES"; fi
+            printf '```\npodman pull %s\n```\n\n' "$ref"
+            printf 'Signed with the sigstore key in `cosign.pub`.\n'
+          } > body.md
+          gh release create "$VERSION" --title "AlmaLinux ${MAJOR} — ${VERSION}" --notes-file body.md
