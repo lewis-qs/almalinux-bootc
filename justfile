@@ -6,7 +6,7 @@ image := registry + "/" + image_name
 version_major := env_var_or_default("VERSION_MAJOR", "10")
 platform := env_var_or_default("PLATFORM", "linux/amd64")
 public_key := "cosign.pub"
-skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable@sha256:8870d39b1f18e6421da42aa13e562ce61cc58f230d238f4a905efe959ff8f491")
+skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable@sha256:90d96d24a52c2da1d85150f984ea4e74cd01fdb4b7e1b83f10c64c346a38fbb3")
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
 podman := "sudo podman"
 
