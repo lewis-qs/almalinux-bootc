@@ -26,7 +26,7 @@ RUN systemd-tmpfiles --create /usr/lib/tmpfiles.d/almalinux-bootc-signing.conf
 LABEL containers.bootc 1
 LABEL ostree.bootable 1
 LABEL org.opencontainers.image.vendor AlmaLinux OS Foundation
-LABEL org.opencontainers.image.description AlmaLinux Bootable Container Image (GNOME)
+LABEL org.opencontainers.image.description AlmaLinux Bootable Container Image (Workstation)
 RUN bootc container lint --fatal-warnings
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

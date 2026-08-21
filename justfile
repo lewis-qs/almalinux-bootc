@@ -12,7 +12,7 @@ rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/cento
 driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:093ef9ce095c64e74cb845cfcd30159e6490d50bb8aecb8723843cfdedb82fb2")  # v1.2.1
 podman := "sudo podman"
 
-# build the base image, or a variant (e.g. `just image gnome`) from Containerfile.<variant>
+# build the base image, or a variant (e.g. `just image workstation`) from Containerfile.<variant>
 [group('build')]
 image var=variant:
     #!/usr/bin/env bash
