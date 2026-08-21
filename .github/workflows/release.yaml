@@ -25,12 +25,13 @@ jobs:
     if: ${{ github.event_name != 'schedule' || github.repository == 'lewis-qs/almalinux-bootc' }}
     runs-on: ubuntu-24.04
     concurrency:
-      group: release-${{ matrix.VERSION_MAJOR }}
+      group: release-${{ matrix.VERSION_MAJOR }}-${{ matrix.IMAGE_VARIANT }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
         VERSION_MAJOR: ['9', '10', '10-kitten']
+        IMAGE_VARIANT: [base, minimal, workstation]
     env:
       GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_ACTOR: ${{ github.repository_owner }}
@@ -44,14 +45,16 @@ jobs:
         id: ver
         env:
           MAJOR: ${{ matrix.VERSION_MAJOR }}
+          IMAGE_VARIANT: ${{ matrix.IMAGE_VARIANT }}
         run: |
+          if [ "$IMAGE_VARIANT" = "base" ]; then VS=""; else VS="-$IMAGE_VARIANT"; fi
           date="$(date -u +%Y%m%d)"
           if [ "$MAJOR" = "10-kitten" ]; then
-            version="10-kitten-${date}"
+            version="10-kitten${VS}-${date}"
           else
-            vid="$(just image-version "$MAJOR")"
-            [ -n "$vid" ] || { echo "::error::no version label on ${IMAGE_REGISTRY}/${IMAGE_NAME}:${MAJOR}"; exit 1; }
-            version="${vid}-${date}"
+            vid="$(just image-version "${MAJOR}${VS}")"
+            [ -n "$vid" ] || { echo "::error::no version label on ${IMAGE_REGISTRY}/${IMAGE_NAME}:${MAJOR}${VS}"; exit 1; }
+            version="${vid}${VS}-${date}"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Release version for $MAJOR: $version"
@@ -61,14 +64,16 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           MAJOR: ${{ matrix.VERSION_MAJOR }}
+          IMAGE_VARIANT: ${{ matrix.IMAGE_VARIANT }}
         run: |
-          just verify-image "${IMAGE_REGISTRY}/${IMAGE_NAME}:${MAJOR}"
-          just release-promote "$VERSION" "$MAJOR"
+          if [ "$IMAGE_VARIANT" = "base" ]; then VS=""; else VS="-$IMAGE_VARIANT"; fi
+          just verify-image "${IMAGE_REGISTRY}/${IMAGE_NAME}:${MAJOR}${VS}"
+          just release-promote "$VERSION" "${MAJOR}${VS}"
           just verify-image "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
 
       - name: Find previous release
         id: prev
-        if: ${{ env.DRY_RUN != 'true' }}
+        if: ${{ env.DRY_RUN != 'true' && matrix.IMAGE_VARIANT == 'base' }}
         continue-on-error: true
         env:
           MAJOR: ${{ matrix.VERSION_MAJOR }}
@@ -79,7 +84,7 @@ jobs:
 
       - name: Diff release notes
         id: notes
-        if: ${{ env.DRY_RUN != 'true' && steps.prev.outputs.version != '' }}
+        if: ${{ env.DRY_RUN != 'true' && steps.prev.outputs.version != '' && matrix.IMAGE_VARIANT == 'base' }}
         continue-on-error: true
         uses: lewis-qs/driftah@e243d6cdbfe3ab82bcab4e828977960f75504c1d # v1
         with:
@@ -88,7 +93,7 @@ jobs:
           args: --ignore-packages kernel --highlight kernel,bootc,systemd,podman,dnf,ostree,NetworkManager,glibc,openssl,selinux-policy
 
       - name: Create GitHub Release
-        if: ${{ env.DRY_RUN != 'true' }}
+        if: ${{ env.DRY_RUN != 'true' && matrix.IMAGE_VARIANT == 'base' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
