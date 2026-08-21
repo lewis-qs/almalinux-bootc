@@ -14,6 +14,27 @@ This project provides tooling to build experimental AlmaLinux bootable container
 
 Our images are based on the work done for [CentOS Bootc Base Images](https://gitlab.com/redhat/centos-stream/containers/bootc/-/tree/c10s?ref_type=heads) and utilize [bootc-base-imagectl](https://gitlab.com/fedora/bootc/base-images/-/blob/main/bootc-base-imagectl.md?ref_type=heads) for their construction.
 
+## Current versions
+
+Key package versions in the latest published image of each major, refreshed automatically on every release:
+
+<!-- versions:start -->
+
+| Package | 9 | 10 | 10-kitten |
+| --- | --- | --- | --- |
+| kernel | `5.14.0-687.39.1.el9_8` | `6.12.0-211.47.1.el10_2` | `6.12.0-250.el10` |
+| bootc | `1.13.0-1.el9` | `1.15.2-1.el10_2.alma.1` | `1.16.2-1.el10.alma.1` |
+| systemd | `252-67.el9_8.4.alma.1` | `257-23.el10_2.2.alma.1` | `257-30.el10.alma.1` |
+| podman | `6:5.8.2-5.el9_8` | `7:5.8.2-5.el10_2.alma.1` | `7:6.0.1-1.el10.alma.1` |
+| dnf | `4.14.0-34.el9_8.alma.1` | `4.20.0-22.el10_2.alma.1` | `4.20.0-26.el10.alma.1` |
+| ostree | `2025.7-1.el9` | `2025.7-1.el10` | `2026.2-1.el10` |
+| NetworkManager | `1:1.54.3-4.el9_8` | `1:1.56.0-2.el10_2` | `1:1.58~rc1-1.el10` |
+| glibc | `2.34-275.el9_8` | `2.39-128.el10_2.alma.1` | `2.39-130.el10.alma.1` |
+| openssl | `1:3.5.5-6.el9_8` | `1:3.5.5-6.el10_2.alma.1` | `1:3.5.7-2.el10.alma.1` |
+| selinux-policy | `38.1.75-2.el9_8` | `42.1.18-4.el10_2.3` | `42.1.25-1.el10` |
+
+<!-- versions:end -->
+
 ## Project Status & News
 
 * **[2024-09-02]** AlmaLinux announces experimental bootc support and HeliumOS: [Read the blog post](https://almalinux.org/blog/2024-09-02-bootc-almalinux-heliumos/)

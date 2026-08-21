@@ -106,3 +106,29 @@ jobs:
             printf 'Signed with the sigstore key in `cosign.pub`.\n'
           } > body.md
           gh release create "$VERSION" --title "AlmaLinux ${MAJOR} — ${VERSION}" --notes-file body.md
+
+  update-readme:
+    needs: release
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.dry_run != true) && (github.event_name != 'schedule' || github.repository == 'lewis-qs/almalinux-bootc') }}
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: update-readme
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-just
+
+      - name: Regenerate versions table
+        run: just readme-versions
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "README versions unchanged"; exit 0
+          fi
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md
+          git commit -m 'docs: update current versions [skip ci]'
+          git push || { git pull --rebase origin main && git push; }
