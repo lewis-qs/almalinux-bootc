@@ -9,6 +9,7 @@ platform := env_var_or_default("PLATFORM", "linux/amd64")
 public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest")
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
+driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:093ef9ce095c64e74cb845cfcd30159e6490d50bb8aecb8723843cfdedb82fb2")  # v1.2.1
 podman := "sudo podman"
 
 # build the base image, or a variant (e.g. `just image gnome`) from Containerfile.<variant>
@@ -231,3 +232,57 @@ verify-image ref:
         "docker://${ref}" dir:/tmp/verified \
         || { echo "verify failed; skopeo runs unpinned ({{skopeo_image}}) — check whether a skopeo update introduced a breaking change" >&2; exit 1; }
     echo "VERIFIED all instances of ${ref}"
+
+# regenerate the "Current versions" table in README from the shipped images
+[group('release')]
+readme-versions:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pkgs="kernel,bootc,systemd,podman,dnf,ostree,NetworkManager,glibc,openssl,selinux-policy"
+    majors=(9 10 10-kitten)
+    dest='{{image}}'
+
+    # refuse to rewrite the README unless exactly one intact, ordered marker pair is present
+    s=$(grep -c '<!-- versions:start -->' README.md || true)
+    e=$(grep -c '<!-- versions:end -->' README.md || true)
+    [ "$s" = 1 ] && [ "$e" = 1 ] || { echo "README needs exactly one versions marker pair (start=$s end=$e)" >&2; exit 1; }
+    [ "$(grep -n '<!-- versions:start -->' README.md | cut -d: -f1)" \
+      -lt "$(grep -n '<!-- versions:end -->' README.md | cut -d: -f1)" ] \
+      || { echo "README versions markers are out of order" >&2; exit 1; }
+
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    declare -A cell
+    for m in "${majors[@]}"; do
+        # a real pipeline (not process substitution) so pipefail catches a jq/driftah failure
+        {{podman}} run --rm --security-opt label=disable --network host \
+            {{driftah_image}} --format json --paths '' --highlight "$pkgs" \
+            "${dest}:${m}" "${dest}:${m}" \
+            | jq -r '.key_versions[] | [.name, (.versions | join(", "))] | @tsv' > "$tmp/kv"
+        while IFS=$'\t' read -r name vers; do
+            cell["${m}|${name}"]="$vers"
+        done < "$tmp/kv"
+        # kernel is always installed; its absence means driftah returned nothing usable -> don't clobber good data
+        [ -n "${cell["${m}|kernel"]:-}" ] || { echo "no kernel version for ${m} — refusing to update README" >&2; exit 1; }
+    done
+
+    {
+        echo '| Package | 9 | 10 | 10-kitten |'
+        echo '| --- | --- | --- | --- |'
+        IFS=',' read -ra names <<<"$pkgs"
+        for n in "${names[@]}"; do
+            printf '| %s |' "$n"
+            for m in "${majors[@]}"; do
+                v="${cell["${m}|${n}"]:-}"
+                if [ -n "$v" ]; then printf ' `%s` |' "$v"; else printf ' — |'; fi
+            done
+            printf '\n'
+        done
+    } > "$tmp/table"
+
+    awk -v tbl="$tmp/table" '
+        /<!-- versions:start -->/ {print; print ""; while ((getline l < tbl) > 0) print l; print ""; skip=1; next}
+        /<!-- versions:end -->/   {skip=0}
+        !skip {print}
+    ' README.md > "$tmp/README.md"
+    mv "$tmp/README.md" README.md
+    echo "README versions table updated"
