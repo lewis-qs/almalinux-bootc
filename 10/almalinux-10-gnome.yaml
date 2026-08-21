@@ -108,15 +108,6 @@ postprocess:
   - |
     #!/usr/bin/env bash
     set -euo pipefail
-    # Remove 'bootc' dracut module from initramfs config
-    # AlmaLinux bootc package does not yet ship the dracut module (requires >= 1.11.0)
-    DRACUT_CONF="/usr/lib/dracut/dracut.conf.d/20-bootc-base.conf"
-    if [ -f "${DRACUT_CONF}" ]; then
-      sed -i 's/ bootc / /' "${DRACUT_CONF}"
-    fi
-  - |
-    #!/usr/bin/env bash
-    set -euo pipefail
     mkdir -p /usr/lib/bootc/kargs.d/
     cat > /usr/lib/bootc/kargs.d/plymouth.toml << EOF
     kargs = ["splash", "quiet", "loglevel=3"]
