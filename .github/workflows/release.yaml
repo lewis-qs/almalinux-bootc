@@ -81,11 +81,11 @@ jobs:
         id: notes
         if: ${{ env.DRY_RUN != 'true' && steps.prev.outputs.version != '' }}
         continue-on-error: true
-        uses: lewis-qs/driftah@e9a0e52657d79816323ce5ab0cbad88f68af6ab9 # v1
+        uses: lewis-qs/driftah@e243d6cdbfe3ab82bcab4e828977960f75504c1d # v1
         with:
           from: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prev.outputs.version }}
           to: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
-          args: --ignore-packages kernel
+          args: --ignore-packages kernel --highlight kernel,bootc,systemd,podman,dnf,ostree,NetworkManager,glibc,openssl,selinux-policy
 
       - name: Create GitHub Release
         if: ${{ env.DRY_RUN != 'true' }}
