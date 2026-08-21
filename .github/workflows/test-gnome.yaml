@@ -90,6 +90,7 @@ jobs:
             set -euo pipefail
             rpm -q gnome-shell gdm plymouth clevis-dracut
             test -f /usr/share/almalinux-bootc/cosign.pub
+            test "$(readlink -f /etc/containers/policy.json)" = /usr/share/almalinux-bootc/containers-policy.json
             test -d /usr/lib/modules
             test -f /usr/lib/bootc/install/20-rhel.toml
             readlink -f /usr/lib/systemd/system/default.target | grep -q graphical.target
