@@ -3,11 +3,11 @@ name: Test workstation images
 on:
   pull_request:
     paths:
-      - "9/almalinux-9-gnome.yaml"
+      - "9/almalinux-9-workstation.yaml"
       - "9/Containerfile.workstation"
-      - "10/almalinux-10-gnome.yaml"
+      - "10/almalinux-10-workstation.yaml"
       - "10/Containerfile.workstation"
-      - "10-kitten/almalinux-10-kitten-gnome.yaml"
+      - "10-kitten/almalinux-10-kitten-workstation.yaml"
       - "10-kitten/Containerfile.workstation"
       - "system-files/**"
       - "cosign.pub"

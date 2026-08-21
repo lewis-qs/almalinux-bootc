@@ -7,9 +7,9 @@ COPY --from=repos /etc/yum.repos.d/*.repo /etc/yum.repos.d/
 
 COPY --from=repos /etc/pki/rpm-gpg/RPM-GPG-KEY-AlmaLinux-9 /etc/pki/rpm-gpg
 
-COPY 9/almalinux-9-gnome.yaml /usr/share/doc/bootc-base-imagectl/manifests/
+COPY 9/almalinux-9-workstation.yaml /usr/share/doc/bootc-base-imagectl/manifests/
 
-RUN /usr/libexec/bootc-base-imagectl build-rootfs --reinject --manifest=almalinux-9-gnome /target-rootfs
+RUN /usr/libexec/bootc-base-imagectl build-rootfs --reinject --manifest=almalinux-9-workstation /target-rootfs
 
 ###
 
