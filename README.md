@@ -6,9 +6,11 @@
 
 Signed, pre-built images are published to the GitHub Container Registry:
 
-* **`ghcr.io/lewis-qs/bootc/almalinux`** (tags: `9`, `10`, `10-kitten`, and dated release tags)
+* **`ghcr.io/lewis-qs/bootc/almalinux`** — base (tags: `9`, `10`, `10-kitten`, and dated release tags)
+  * **minimal:** `9-minimal`, `10-minimal`, `10-kitten-minimal` (+ dated, e.g. `10.2-minimal-<date>`)
+  * **workstation:** `9-workstation`, `10-workstation`, `10-kitten-workstation` (+ dated)
 
-Images are signed with sigstore; the public key ships in each image at `/usr/share/almalinux-bootc/cosign.pub` and is enforced on update via the container policy shipped in `/usr`.
+Images are signed with sigstore; the public key ships in each image at `/usr/share/almalinux-bootc/cosign.pub` and is enforced on update via the container policy shipped in `/usr`. Variants publish to the same repository, so the same key and policy cover them.
 
 This project provides tooling to build experimental AlmaLinux bootable container images. These images leverage the [bootc project](https://containers.github.io/bootc/), which enables the creation of bootable OS images from container images.
 
