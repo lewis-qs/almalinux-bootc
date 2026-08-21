@@ -4,7 +4,7 @@ image_name := env_var_or_default("IMAGE_NAME", "almalinux")
 registry := env_var_or_default("IMAGE_REGISTRY", "ghcr.io/lewis-qs/bootc")
 image := registry + "/" + image_name
 version_major := env_var_or_default("VERSION_MAJOR", "10")
-variant := env_var_or_default("VARIANT", "")
+variant := env_var_or_default("IMAGE_VARIANT", "")
 platform := env_var_or_default("PLATFORM", "linux/amd64")
 public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest")
@@ -17,7 +17,7 @@ image var=variant:
     #!/usr/bin/env bash
     set -euo pipefail
     cf="{{version_major}}/Containerfile"
-    [ -n "{{ var }}" ] && cf="{{version_major}}/Containerfile.{{ var }}"
+    if [ -n "{{ var }}" ]; then cf="{{version_major}}/Containerfile.{{ var }}"; fi
     {{podman}} build \
         --platform={{platform}} \
         --security-opt=label=disable \
