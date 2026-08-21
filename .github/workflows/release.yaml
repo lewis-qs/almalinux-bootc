@@ -86,7 +86,7 @@ jobs:
         id: notes
         if: ${{ env.DRY_RUN != 'true' && steps.prev.outputs.version != '' && matrix.IMAGE_VARIANT == 'base' }}
         continue-on-error: true
-        uses: lewis-qs/driftah@f7245e0739f68e479279ef89af1f0d74a5c96d07 # v1
+        uses: lewis-qs/driftah@66339befab120f3e59be6a06cb7ea1a3735b5a6e # v1
         with:
           from: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prev.outputs.version }}
           to: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
