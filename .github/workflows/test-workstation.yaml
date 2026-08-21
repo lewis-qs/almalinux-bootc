@@ -1,18 +1,18 @@
-name: Test GNOME images
+name: Test workstation images
 
 on:
   pull_request:
     paths:
-      - "9/almalinux-9-gnome.yaml"
-      - "9/Containerfile.gnome"
-      - "10/almalinux-10-gnome.yaml"
-      - "10/Containerfile.gnome"
-      - "10-kitten/almalinux-10-kitten-gnome.yaml"
-      - "10-kitten/Containerfile.gnome"
+      - "9/almalinux-9-workstation.yaml"
+      - "9/Containerfile.workstation"
+      - "10/almalinux-10-workstation.yaml"
+      - "10/Containerfile.workstation"
+      - "10-kitten/almalinux-10-kitten-workstation.yaml"
+      - "10-kitten/Containerfile.workstation"
       - "system-files/**"
       - "cosign.pub"
       - "justfile"
-      - ".github/workflows/test-gnome.yaml"
+      - ".github/workflows/test-workstation.yaml"
   workflow_dispatch:
     inputs:
       VERSION_MAJOR:
@@ -34,7 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: almalinux-bootc-gnome
+  IMAGE_NAME: almalinux-bootc-workstation
 
 jobs:
   matrix:
@@ -54,7 +54,7 @@ jobs:
           fi
 
   build:
-    name: gnome ${{ matrix.VERSION_MAJOR }} ${{ matrix.ARCH }}
+    name: workstation ${{ matrix.VERSION_MAJOR }} ${{ matrix.ARCH }}
     needs: matrix
     runs-on: ${{ matrix.ARCH == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     strategy:
@@ -75,11 +75,11 @@ jobs:
           sudo docker image prune --all --force || true
           df -h /
 
-      - name: Build GNOME image
+      - name: Build workstation image
         env:
           PLATFORM: linux/${{ matrix.ARCH }}
           VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
-        run: just image gnome
+        run: just image workstation
 
       - name: Smoke checks
         env:
