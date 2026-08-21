@@ -114,7 +114,7 @@ jobs:
 
   update-readme:
     needs: release
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.dry_run != true) && (github.event_name != 'schedule' || github.repository == 'lewis-qs/almalinux-bootc') }}
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true) && (github.event_name != 'schedule' || github.repository == 'lewis-qs/almalinux-bootc') }}
     runs-on: ubuntu-24.04
     concurrency:
       group: update-readme
