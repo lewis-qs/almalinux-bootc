@@ -75,6 +75,7 @@ jobs:
       matrix:
         VERSION_MAJOR: ${{ fromJSON(needs.set-versions-matrix.outputs.matrix) }}
         ARCH: [amd64, arm64, amd64/v2]
+        IMAGE_VARIANT: [base, minimal, workstation]
         exclude:
           - VERSION_MAJOR: 9
             ARCH: amd64/v2
@@ -94,6 +95,7 @@ jobs:
       name: Build and Push
       with:
         VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
+        IMAGE_VARIANT: ${{ matrix.IMAGE_VARIANT }}
         DATE_STAMP: ${{ env.DATE_STAMP }}
         IMAGE_REGISTRY: ${{ env.IMAGE_REGISTRY }}
         GITHUB_ACTOR: ${{ github.actor }}
@@ -110,6 +112,7 @@ jobs:
       fail-fast: false
       matrix:
         VERSION_MAJOR: ${{ fromJSON(needs.set-versions-matrix.outputs.matrix) }}
+        IMAGE_VARIANT: [base, minimal, workstation]
     env:
       DATE_STAMP: ${{ needs.set-versions-matrix.outputs.date_stamp }}
 
@@ -122,7 +125,7 @@ jobs:
       - name: Fetch Build Outputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: ${{ env.IMAGE_NAME }}_${{ matrix.VERSION_MAJOR }}_*
+          pattern: ${{ env.IMAGE_NAME }}_${{ matrix.VERSION_MAJOR }}_${{ matrix.IMAGE_VARIANT }}_*
           merge-multiple: true
           path: /tmp/artifacts
 
@@ -188,9 +191,12 @@ jobs:
           SOURCE: ${{ github.repositoryUrl }}
           URL: ${{ github.event.repository.html_url }}
         run: |
-          tags=("$VERSION_MAJOR" "${VERSION_ID}-${DATE_STAMP}" "$LONG_VERSION")
-          [ "$VERSION_MAJOR" = "$LATEST_MAJOR" ] && tags+=("latest")
-          [ "$VERSION_MAJOR" != "10-kitten" ] && tags+=("$VERSION_ID")
+          if [ "${{ matrix.IMAGE_VARIANT }}" = "base" ]; then VS=""; else VS="-${{ matrix.IMAGE_VARIANT }}"; fi
+          tags=("${VERSION_MAJOR}${VS}" "${VERSION_ID}${VS}-${DATE_STAMP}" "${LONG_VERSION}${VS}")
+          if [ "${{ matrix.IMAGE_VARIANT }}" = "base" ]; then
+            [ "$VERSION_MAJOR" = "$LATEST_MAJOR" ] && tags+=("latest")
+            [ "$VERSION_MAJOR" != "10-kitten" ] && tags+=("$VERSION_ID")
+          fi
           {
             echo 'tags<<EOF'
             printf '%s\n' "${tags[@]}"

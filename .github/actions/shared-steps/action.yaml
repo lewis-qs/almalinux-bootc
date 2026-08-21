@@ -24,6 +24,10 @@ inputs:
     description: The passphrase for the sigstore private key (empty if none)
     required: false
     default: ''
+  IMAGE_VARIANT:
+    description: The variant to build (base, minimal, workstation)
+    required: false
+    default: base
 
 runs:
   using: "composite"
@@ -35,6 +39,16 @@ runs:
         echo "IMAGE_DEST=${{ inputs.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_ENV"
         ARCH=${{ matrix.ARCH }}
         echo "CLEAN_ARCH=${ARCH//\//_}" >> "$GITHUB_ENV"
+
+        # base -> empty variant + empty suffix; variant -> the name + "-name" suffix.
+        # NB: IMAGE_VARIANT is the build variant; env.VARIANT (above) is the --platform arg. Different things.
+        if [ "${{ inputs.IMAGE_VARIANT }}" = "base" ]; then
+          echo "IMAGE_VARIANT=" >> "$GITHUB_ENV"
+          echo "VSUFFIX=" >> "$GITHUB_ENV"
+        else
+          echo "IMAGE_VARIANT=${{ inputs.IMAGE_VARIANT }}" >> "$GITHUB_ENV"
+          echo "VSUFFIX=-${{ inputs.IMAGE_VARIANT }}" >> "$GITHUB_ENV"
+        fi
 
     - name: Login to registry
       shell: bash
@@ -121,7 +135,7 @@ runs:
         SIGSTORE_PRIVATE_KEY: ${{ inputs.SIGSTORE_PRIVATE_KEY }}
         SIGSTORE_PASSPHRASE: ${{ inputs.SIGSTORE_PASSPHRASE }}
       run: |
-        REF="${IMAGE_DEST}:${VERSION}-${{ inputs.DATE_STAMP }}-${CLEAN_ARCH}"
+        REF="${IMAGE_DEST}:${VERSION}${VSUFFIX}-${{ inputs.DATE_STAMP }}-${CLEAN_ARCH}"
         just push-image "$REF" "localhost/${{ env.IMAGE_NAME }}:latest"
         echo "digest=$(cat /tmp/digestfile)" >> $GITHUB_OUTPUT
 
@@ -138,16 +152,17 @@ runs:
           --arg version "${{ steps.run.outputs.version-id }}" \
           --arg long_version "${{ steps.run.outputs.long-version }}" \
           --arg vendor "${{ steps.run.outputs.vendor }}" \
-          '{($platform): {digest: $digest, id: $id, version: $version, major: $major, long_version: $long_version, vendor: $vendor}}' \
-          > /tmp/outputs/digests/${{ env.IMAGE_NAME }}_${{ matrix.VERSION_MAJOR }}_${{ env.CLEAN_ARCH }}.json
+          --arg variant "${{ inputs.IMAGE_VARIANT }}" \
+          '{($platform): {digest: $digest, id: $id, version: $version, major: $major, long_version: $long_version, vendor: $vendor, variant: $variant}}' \
+          > /tmp/outputs/digests/${{ env.IMAGE_NAME }}_${{ inputs.VERSION_MAJOR }}_${{ inputs.IMAGE_VARIANT }}_${{ env.CLEAN_ARCH }}.json
 
-        cat /tmp/outputs/digests/${{ env.IMAGE_NAME }}_${{ matrix.VERSION_MAJOR }}_${{ env.CLEAN_ARCH }}.json
+        cat /tmp/outputs/digests/${{ env.IMAGE_NAME }}_${{ inputs.VERSION_MAJOR }}_${{ inputs.IMAGE_VARIANT }}_${{ env.CLEAN_ARCH }}.json
 
     - name: Upload Output Artifacts
       if: ${{ env.res != 0 || github.event_name == 'workflow_dispatch' }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
-        name: ${{ env.IMAGE_NAME }}_${{ matrix.VERSION_MAJOR }}_${{ env.CLEAN_ARCH }}
+        name: ${{ env.IMAGE_NAME }}_${{ inputs.VERSION_MAJOR }}_${{ inputs.IMAGE_VARIANT }}_${{ env.CLEAN_ARCH }}
         retention-days: 1
         if-no-files-found: error
         path: |
