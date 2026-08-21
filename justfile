@@ -9,7 +9,7 @@ platform := env_var_or_default("PLATFORM", "linux/amd64")
 public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest")
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
-driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:093ef9ce095c64e74cb845cfcd30159e6490d50bb8aecb8723843cfdedb82fb2")  # v1.2.1
+driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:17ddcc43285354b9bd2dccba713d076d0cde1adfa585f8f7b9e0737d3073e6fb")  # v1.3.1
 podman := "sudo podman"
 
 # build the base image, or a variant (e.g. `just image workstation`) from Containerfile.<variant>
@@ -255,7 +255,7 @@ readme-versions:
     for m in "${majors[@]}"; do
         # a real pipeline (not process substitution) so pipefail catches a jq/driftah failure
         {{podman}} run --rm --security-opt label=disable --network host \
-            {{driftah_image}} --format json --paths '' --highlight "$pkgs" \
+            {{driftah_image}} --format json --paths '' --short-versions --highlight "$pkgs" \
             "${dest}:${m}" "${dest}:${m}" \
             | jq -r '.key_versions[] | [.name, (.versions | join(", "))] | @tsv' > "$tmp/kv"
         while IFS=$'\t' read -r name vers; do
