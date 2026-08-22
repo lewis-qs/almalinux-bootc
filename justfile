@@ -186,6 +186,59 @@ image-version source:
         {{skopeo_image}} inspect "${tls[@]}" "docker://${dest}:{{source}}" \
         | jq -r '.Labels["version"] // .Labels["redhat.version-id"] // empty' | tr -d '\r\n'
 
+# on a partial nightly (only some arches had package updates), fill the arches
+# missing from DIGESTS_JSON with their current digest from the published manifest,
+# so the assembled multi-arch manifest is always complete. prints the completed JSON.
+[private]
+[group('release')]
+backfill-digests major variant digests:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${GHCR_TOKEN:?backfill-digests needs GHCR_TOKEN}"
+    : "${GITHUB_ACTOR:?backfill-digests needs GITHUB_ACTOR}"
+    dest='{{image}}'; host="${dest%%/*}"
+    vs=""; [ '{{ variant }}' != "base" ] && vs="-{{ variant }}"
+    src="${dest}:{{ major }}${vs}"
+    merged='{{ digests }}'
+    arches=(amd64 arm64); [ '{{ major }}' != "9" ] && arches+=(amd64/v2)
+    # already complete? return unchanged, no registry call
+    complete=1
+    for a in "${arches[@]}"; do jq -e --arg a "$a" 'has($a)' <<<"$merged" >/dev/null || complete=0; done
+    [ "$complete" = 1 ] && { printf '%s' "$merged"; exit 0; }
+    work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+    authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
+    printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
+    tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--tls-verify=false)
+    raw="$({{podman}} run --rm --security-opt label=disable --network host \
+        -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+        {{skopeo_image}} inspect "${tls[@]}" --raw "docker://${src}" 2>/dev/null || true)"
+    [ -n "$raw" ] || { echo "backfill: no existing manifest at ${src}; leaving digests as-is" >&2; printf '%s' "$merged"; exit 0; }
+    # copy version/id/etc from a freshly-built entry (version-id is uniform across arches)
+    tmpl="$(jq -c 'to_entries | .[0].value' <<<"$merged")"
+    for a in "${arches[@]}"; do
+        jq -e --arg a "$a" 'has($a)' <<<"$merged" >/dev/null && continue
+        arch="${a%%/*}"; var=""; [ "$a" != "$arch" ] && var="${a#*/}"
+        d="$(jq -r --arg ar "$arch" --arg v "$var" \
+            '.manifests[] | select(.platform.architecture==$ar and ((.platform.variant // "")==$v)) | .digest' \
+            <<<"$raw" | head -1)"
+        [ -n "$d" ] || { echo "backfill: ${a} not found in existing manifest ${src}" >&2; continue; }
+        # the backfilled arch must be the same OS version as the freshly-built arches.
+        # a mismatch means this arch is genuinely stale (e.g. its rebuild failed on a
+        # version-bump night) rather than merely skipped for no updates — refuse it.
+        tver="$(jq -r '.version // empty' <<<"$tmpl")"
+        bver="$({{podman}} run --rm --security-opt label=disable --network host \
+            -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+            {{skopeo_image}} inspect "${tls[@]}" "docker://${dest}@${d}" \
+            | jq -r '.Labels["version"] // .Labels["redhat.version-id"] // empty')"
+        if [ -n "$tver" ] && [ -n "$bver" ] && [ "$bver" != "$tver" ]; then
+            echo "backfill: ${a} is version ${bver} but the rebuilt arches are ${tver} — refusing to ship a stale arch" >&2
+            exit 1
+        fi
+        merged="$(jq -c --arg a "$a" --arg d "$d" --argjson t "$tmpl" '. + {($a): ($t + {digest: $d})}' <<<"$merged")"
+        echo "backfill: ${a} <- ${d} @ ${bver:-?} (from ${src})" >&2
+    done
+    printf '%s' "$merged"
+
 [group('release')]
 release-promote version source:
     #!/usr/bin/env bash

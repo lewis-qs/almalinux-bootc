@@ -131,6 +131,9 @@ jobs:
 
       - name: Load Outputs
         id: load-outputs
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
           if [[ ! -d /tmp/artifacts ]]; then
             echo "No artifacts found, skipping manifest creation"
@@ -139,9 +142,12 @@ jobs:
           fi
 
           ls -lR /tmp/artifacts/
-          jq -sc add /tmp/artifacts/*.json > merged.json
-          echo "DIGESTS_JSON=$(cat merged.json)" >> $GITHUB_OUTPUT
-          jq '.' merged.json
+          merged="$(jq -sc add /tmp/artifacts/*.json)"
+          # a partial nightly builds only the arches that had updates; fill the rest
+          # from the published manifest so the assembled manifest is always complete
+          merged="$(just backfill-digests "${{ matrix.VERSION_MAJOR }}" "${{ matrix.IMAGE_VARIANT }}" "$merged")"
+          echo "DIGESTS_JSON=$merged" >> "$GITHUB_OUTPUT"
+          jq '.' <<<"$merged"
 
       - name: Sanity check
         if: ${{ env.skip != 1 }}
