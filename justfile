@@ -9,7 +9,7 @@ platform := env_var_or_default("PLATFORM", "linux/amd64")
 public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest")
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
-driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:17ddcc43285354b9bd2dccba713d076d0cde1adfa585f8f7b9e0737d3073e6fb")  # v1.3.1
+driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:e953b9f0e42b10ed62e588ef1cfde417b0d739c367cadb749f1f09a3b3af8126")  # v1.4.1
 podman := "sudo podman"
 
 # build the base image, or a variant (e.g. `just image workstation`) from Containerfile.<variant>

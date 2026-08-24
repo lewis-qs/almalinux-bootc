@@ -86,11 +86,11 @@ jobs:
         id: notes
         if: ${{ env.DRY_RUN != 'true' && steps.prev.outputs.version != '' && matrix.IMAGE_VARIANT == 'base' }}
         continue-on-error: true
-        uses: lewis-qs/driftah@66339befab120f3e59be6a06cb7ea1a3735b5a6e # v1
+        uses: lewis-qs/driftah@ed2dfaaabb29143f1f70b6b9eb2e8a4648a0b22b # v1
         with:
           from: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prev.outputs.version }}
           to: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
-          args: --ignore-packages kernel --short-versions --highlight kernel,bootc,systemd,podman,dnf,ostree,NetworkManager,glibc,openssl,selinux-policy
+          args: --ignore-packages kernel --short-versions --ignore usr/lib/.build-id/ --highlight kernel,bootc,systemd,podman,dnf,ostree,NetworkManager,glibc,openssl,selinux-policy
 
       - name: Create GitHub Release
         if: ${{ env.DRY_RUN != 'true' && matrix.IMAGE_VARIANT == 'base' }}
