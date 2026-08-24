@@ -84,6 +84,30 @@ Then `just rechunk` (with the same `IMAGE_NAME`) to produce the final layered im
 * `IMAGE_NAME`: The base name for the output container image (defaults to `almalinux`).
 * `VERSION_MAJOR`: The AlmaLinux major version (e.g., 9, 10, 10-kitten).
 
+### Building install media and VMs locally
+
+The published images are the source of truth — you can turn any of them into an
+installer ISO or a bootable disk image on your own machine. The recipes take
+`<variant> <major>` (variant omitted builds the base):
+
+```bash
+just pull-image workstation 10-kitten   # pull ghcr.io/lewis-qs/bootc/almalinux:10-kitten-workstation
+just build-iso  workstation 10-kitten   # -> output/bootiso/install.iso  (anaconda, via bootc-image-builder)
+just build-vm   workstation 10-kitten   # -> output/disk.raw             (bootc install to-disk)
+```
+
+`build-iso` and `build-vm` verify the image's signature against `cosign.pub`
+before building. Boot the result in qemu (UEFI, KVM):
+
+```bash
+just run-iso    # boots output/bootiso/install.iso
+just run-vm     # boots output/disk.raw
+```
+
+Extra prerequisites: `bootc-image-builder` (pulled automatically) for `build-iso`,
+and for the `run-*` recipes `qemu` with OVMF firmware (override the path with
+`OVMF_CODE=` if yours differs). Run `just --list` for the full recipe set.
+
 ## Contributing and Community
 
 We welcome contributions and feedback!  
