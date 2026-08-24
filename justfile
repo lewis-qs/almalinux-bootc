@@ -10,15 +10,19 @@ public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest")
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
 driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:e953b9f0e42b10ed62e588ef1cfde417b0d739c367cadb749f1f09a3b3af8126")  # v1.4.1
+bib_image := env_var_or_default("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder:latest")
+ovmf := env_var_or_default("OVMF_CODE", "/usr/share/edk2/ovmf/OVMF_CODE.fd")
+local_image := "localhost/" + image_name + ":latest"
+output_dir := env_var_or_default("OUTPUT_DIR", "output")
 podman := "sudo podman"
 
-# build the base image, or a variant (e.g. `just image workstation`) from Containerfile.<variant>
+# build the base image, or a variant: `just image workstation 10-kitten`
 [group('build')]
-image var=variant:
+image variant=variant major=version_major:
     #!/usr/bin/env bash
     set -euo pipefail
-    cf="{{version_major}}/Containerfile"
-    if [ -n "{{ var }}" ]; then cf="{{version_major}}/Containerfile.{{ var }}"; fi
+    cf="{{ major }}/Containerfile"
+    if [ -n "{{ variant }}" ]; then cf="{{ major }}/Containerfile.{{ variant }}"; fi
     {{podman}} build \
         --platform={{platform}} \
         --security-opt=label=disable \
@@ -187,9 +191,7 @@ image-version source:
         {{skopeo_image}} inspect "${tls[@]}" "docker://${dest}:{{source}}" \
         | jq -r '.Labels["version"] // .Labels["redhat.version-id"] // empty' | tr -d '\r\n'
 
-# on a partial nightly (only some arches had package updates), fill the arches
-# missing from DIGESTS_JSON with their current digest from the published manifest,
-# so the assembled multi-arch manifest is always complete. prints the completed JSON.
+# fill arches missing from a partial nightly's DIGESTS_JSON from the published manifest, so the manifest is always complete
 [private]
 [group('release')]
 backfill-digests major variant digests:
@@ -202,8 +204,7 @@ backfill-digests major variant digests:
     src="${dest}:{{ major }}${vs}"
     merged='{{ digests }}'
     arches=(amd64 arm64); [ '{{ major }}' != "9" ] && arches+=(amd64/v2)
-    # already complete? return unchanged, no registry call
-    complete=1
+    complete=1  # already complete -> return unchanged, no registry call
     for a in "${arches[@]}"; do jq -e --arg a "$a" 'has($a)' <<<"$merged" >/dev/null || complete=0; done
     [ "$complete" = 1 ] && { printf '%s' "$merged"; exit 0; }
     work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
@@ -214,8 +215,7 @@ backfill-digests major variant digests:
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} inspect "${tls[@]}" --raw "docker://${src}" 2>/dev/null || true)"
     [ -n "$raw" ] || { echo "backfill: no existing manifest at ${src}; leaving digests as-is" >&2; printf '%s' "$merged"; exit 0; }
-    # copy version/id/etc from a freshly-built entry (version-id is uniform across arches)
-    tmpl="$(jq -c 'to_entries | .[0].value' <<<"$merged")"
+    tmpl="$(jq -c 'to_entries | .[0].value' <<<"$merged")"  # version-id is uniform across arches
     for a in "${arches[@]}"; do
         jq -e --arg a "$a" 'has($a)' <<<"$merged" >/dev/null && continue
         arch="${a%%/*}"; var=""; [ "$a" != "$arch" ] && var="${a#*/}"
@@ -223,9 +223,7 @@ backfill-digests major variant digests:
             '.manifests[] | select(.platform.architecture==$ar and ((.platform.variant // "")==$v)) | .digest' \
             <<<"$raw" | head -1)"
         [ -n "$d" ] || { echo "backfill: ${a} not found in existing manifest ${src}" >&2; continue; }
-        # the backfilled arch must be the same OS version as the freshly-built arches.
-        # a mismatch means this arch is genuinely stale (e.g. its rebuild failed on a
-        # version-bump night) rather than merely skipped for no updates — refuse it.
+        # refuse a version mismatch: the arch is genuinely stale (failed rebuild), not a no-update skip
         tver="$(jq -r '.version // empty' <<<"$tmpl")"
         bver="$({{podman}} run --rm --security-opt label=disable --network host \
             -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
@@ -296,7 +294,6 @@ readme-versions:
     majors=(9 10 10-kitten)
     dest='{{image}}'
 
-    # refuse to rewrite the README unless exactly one intact, ordered marker pair is present
     s=$(grep -c '<!-- versions:start -->' README.md || true)
     e=$(grep -c '<!-- versions:end -->' README.md || true)
     [ "$s" = 1 ] && [ "$e" = 1 ] || { echo "README needs exactly one versions marker pair (start=$s end=$e)" >&2; exit 1; }
@@ -307,7 +304,6 @@ readme-versions:
     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
     declare -A cell
     for m in "${majors[@]}"; do
-        # a real pipeline (not process substitution) so pipefail catches a jq/driftah failure
         {{podman}} run --rm --security-opt label=disable --network host \
             {{driftah_image}} --format json --paths '' --short-versions --highlight "$pkgs" \
             "${dest}:${m}" "${dest}:${m}" \
@@ -315,8 +311,7 @@ readme-versions:
         while IFS=$'\t' read -r name vers; do
             cell["${m}|${name}"]="$vers"
         done < "$tmp/kv"
-        # kernel is always installed; its absence means driftah returned nothing usable -> don't clobber good data
-        [ -n "${cell["${m}|kernel"]:-}" ] || { echo "no kernel version for ${m} — refusing to update README" >&2; exit 1; }
+        [ -n "${cell["${m}|kernel"]:-}" ] || { echo "no kernel version for ${m} — refusing to update README" >&2; exit 1; }  # kernel always present; absent = bad driftah output
     done
 
     {
@@ -340,3 +335,52 @@ readme-versions:
     ' README.md > "$tmp/README.md"
     mv "$tmp/README.md" README.md
     echo "README versions table updated"
+
+# pull a published image: `just pull-image workstation 10-kitten`
+[group('publish')]
+pull-image variant=variant major=version_major:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="{{ major }}"
+    if [ -n "{{ variant }}" ]; then tag="{{ major }}-{{ variant }}"; fi
+    {{podman}} pull "{{image}}:${tag}"
+
+# build an installer ISO from a bootc image (osbuild via bootc-image-builder)
+[group('disk')]
+build-iso ref=local_image type="anaconda-iso":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "{{output_dir}}"
+    {{podman}} run --rm --privileged --security-opt label=disable \
+        -v "$(pwd)/{{output_dir}}":/output \
+        -v /var/lib/containers/storage:/var/lib/containers/storage \
+        {{bib_image}} \
+        --type {{ type }} --local "{{ ref }}"
+    echo "ISO written under {{output_dir}}/bootiso/"
+
+# generate a raw disk from a bootc image (bootc install to-disk --via-loopback)
+[group('disk')]
+build-vm ref=local_image size="10G":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "{{output_dir}}"
+    truncate -s {{ size }} "{{output_dir}}/disk.raw"
+    {{podman}} run --rm --privileged --security-opt label=disable --pid=host \
+        -v /var/lib/containers/storage:/var/lib/containers/storage \
+        -v /dev:/dev \
+        -v "$(pwd)/{{output_dir}}":/output \
+        "{{ ref }}" \
+        bootc install to-disk --via-loopback --generic-image --wipe /output/disk.raw
+    echo "raw disk at {{output_dir}}/disk.raw"
+
+# boot an installer ISO in qemu (UEFI + KVM)
+[group('run')]
+run-iso iso=(output_dir + "/bootiso/install.iso") mem="4096":
+    qemu-system-x86_64 -machine q35 -accel kvm -cpu host -m {{ mem }} \
+        -bios {{ovmf}} -cdrom "{{ iso }}" -boot d
+
+# boot a raw disk image in qemu (UEFI + KVM)
+[group('run')]
+run-vm disk=(output_dir + "/disk.raw") mem="4096":
+    qemu-system-x86_64 -machine q35 -accel kvm -cpu host -m {{ mem }} \
+        -bios {{ovmf}} -drive file="{{ disk }}",format=raw,if=virtio
