@@ -23,6 +23,11 @@ image variant=variant major=version_major:
     set -euo pipefail
     cf="{{ major }}/Containerfile"
     if [ -n "{{ variant }}" ]; then cf="{{ major }}/Containerfile.{{ variant }}"; fi
+    # pre-pull the FROM bases with retry: podman build won't retry a flaky upstream pull, so do it here
+    bases="$(grep -oiE '^FROM[[:space:]]+[^[:space:]]+' "$cf" | awk '{print $2}' | grep / | sort -u || true)"
+    for base in $bases; do
+        for i in 1 2 3; do {{podman}} pull "$base" && break || { echo "pull $base attempt $i failed; retrying" >&2; sleep $((5 * i)); }; done
+    done
     {{podman}} build \
         --platform={{platform}} \
         --security-opt=label=disable \
