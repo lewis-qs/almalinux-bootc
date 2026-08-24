@@ -10,15 +10,21 @@ public_key := "cosign.pub"
 skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest")
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
 driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:e953b9f0e42b10ed62e588ef1cfde417b0d739c367cadb749f1f09a3b3af8126")  # v1.4.1
+bib_image := env_var_or_default("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder:latest")
+ovmf := env_var_or_default("OVMF_CODE", "/usr/share/edk2/ovmf/OVMF_CODE.fd")
+output_dir := env_var_or_default("OUTPUT_DIR", "output")
 podman := "sudo podman"
 
-# build the base image, or a variant (e.g. `just image workstation`) from Containerfile.<variant>
 [group('build')]
-image var=variant:
+image variant=variant major=version_major:
     #!/usr/bin/env bash
     set -euo pipefail
-    cf="{{version_major}}/Containerfile"
-    if [ -n "{{ var }}" ]; then cf="{{version_major}}/Containerfile.{{ var }}"; fi
+    cf="{{ major }}/Containerfile"
+    if [ -n "{{ variant }}" ]; then cf="{{ major }}/Containerfile.{{ variant }}"; fi
+    bases="$(grep -oiE '^FROM[[:space:]]+[^[:space:]]+' "$cf" | awk '{print $2}' | grep / | sort -u || true)"
+    for base in $bases; do
+        for i in 1 2 3; do {{podman}} pull "$base" && break || { echo "pull $base attempt $i failed; retrying" >&2; sleep $((5 * i)); }; done
+    done
     {{podman}} build \
         --platform={{platform}} \
         --security-opt=label=disable \
@@ -121,7 +127,7 @@ sign-image ref digest multi_arch="":
         {{skopeo_image}} copy --policy /work/verify.json --registries.d /work/regd --preserve-digests "${ma[@]}" "${tls[@]}" \
         "$src" dir:/tmp/verified \
         || { echo "verify failed; skopeo runs unpinned ({{skopeo_image}}) — check whether a skopeo update introduced a breaking change" >&2; exit 1; }
-    echo "Signed + verified ${ref} @ {{digest}}"
+    echo "Signed & verified ${ref} @ {{digest}}"
 
 [group('auth')]
 [private]
@@ -148,7 +154,6 @@ sigstore-keygen:
     echo "Private key: $out/sigstore.private"
     echo "Set GH secret SIGSTORE_PRIVATE_KEY from it and back it up, then: rm -rf $out"
 
-# the previous released tag for a major+variant (empty if none), for release-note diffs
 [private]
 [group('release')]
 previous-release major variant current:
@@ -187,9 +192,6 @@ image-version source:
         {{skopeo_image}} inspect "${tls[@]}" "docker://${dest}:{{source}}" \
         | jq -r '.Labels["version"] // .Labels["redhat.version-id"] // empty' | tr -d '\r\n'
 
-# on a partial nightly (only some arches had package updates), fill the arches
-# missing from DIGESTS_JSON with their current digest from the published manifest,
-# so the assembled multi-arch manifest is always complete. prints the completed JSON.
 [private]
 [group('release')]
 backfill-digests major variant digests:
@@ -202,7 +204,6 @@ backfill-digests major variant digests:
     src="${dest}:{{ major }}${vs}"
     merged='{{ digests }}'
     arches=(amd64 arm64); [ '{{ major }}' != "9" ] && arches+=(amd64/v2)
-    # already complete? return unchanged, no registry call
     complete=1
     for a in "${arches[@]}"; do jq -e --arg a "$a" 'has($a)' <<<"$merged" >/dev/null || complete=0; done
     [ "$complete" = 1 ] && { printf '%s' "$merged"; exit 0; }
@@ -214,7 +215,6 @@ backfill-digests major variant digests:
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
         {{skopeo_image}} inspect "${tls[@]}" --raw "docker://${src}" 2>/dev/null || true)"
     [ -n "$raw" ] || { echo "backfill: no existing manifest at ${src}; leaving digests as-is" >&2; printf '%s' "$merged"; exit 0; }
-    # copy version/id/etc from a freshly-built entry (version-id is uniform across arches)
     tmpl="$(jq -c 'to_entries | .[0].value' <<<"$merged")"
     for a in "${arches[@]}"; do
         jq -e --arg a "$a" 'has($a)' <<<"$merged" >/dev/null && continue
@@ -223,9 +223,6 @@ backfill-digests major variant digests:
             '.manifests[] | select(.platform.architecture==$ar and ((.platform.variant // "")==$v)) | .digest' \
             <<<"$raw" | head -1)"
         [ -n "$d" ] || { echo "backfill: ${a} not found in existing manifest ${src}" >&2; continue; }
-        # the backfilled arch must be the same OS version as the freshly-built arches.
-        # a mismatch means this arch is genuinely stale (e.g. its rebuild failed on a
-        # version-bump night) rather than merely skipped for no updates — refuse it.
         tver="$(jq -r '.version // empty' <<<"$tmpl")"
         bver="$({{podman}} run --rm --security-opt label=disable --network host \
             -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
@@ -268,26 +265,27 @@ release-promote version source:
 verify-image ref:
     #!/usr/bin/env bash
     set -euo pipefail
-    : "${GHCR_TOKEN:?verify-image needs GHCR_TOKEN}"
-    : "${GITHUB_ACTOR:?verify-image needs GITHUB_ACTOR}"
     work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
     cp '{{public_key}}' "$work/pub"
     ref='{{ref}}'; host="${ref%%/*}"; repo="${ref%:*}"
     mkdir "$work/regd"
     printf 'docker:\n  %s:\n    use-sigstore-attachments: true\n' "$host" > "$work/regd/reg.yaml"
-    authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
-    printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
     printf '{"default":[{"type":"reject"}],"transports":{"docker":{"%s":[{"type":"sigstoreSigned","keyPath":"/work/pub","signedIdentity":{"type":"matchRepository"}}]}}}' "$repo" > "$work/verify.json"
     tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--src-tls-verify=false)
+    auth=()
+    if [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GITHUB_ACTOR:-}" ]; then
+        authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
+        printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
+        auth=(-e REGISTRY_AUTH_FILE=/work/auth.json)
+    fi
     echo "Verifying every instance of ${ref} against the committed public key"
     {{podman}} run --rm --security-opt label=disable --network host \
-        -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \
+        -v "$work:/work:Z" "${auth[@]}" \
         {{skopeo_image}} copy --multi-arch all --policy /work/verify.json --registries.d /work/regd "${tls[@]}" \
         "docker://${ref}" dir:/tmp/verified \
         || { echo "verify failed; skopeo runs unpinned ({{skopeo_image}}) — check whether a skopeo update introduced a breaking change" >&2; exit 1; }
     echo "VERIFIED all instances of ${ref}"
 
-# regenerate the "Current versions" table in README from the shipped images
 [group('release')]
 readme-versions:
     #!/usr/bin/env bash
@@ -296,7 +294,6 @@ readme-versions:
     majors=(9 10 10-kitten)
     dest='{{image}}'
 
-    # refuse to rewrite the README unless exactly one intact, ordered marker pair is present
     s=$(grep -c '<!-- versions:start -->' README.md || true)
     e=$(grep -c '<!-- versions:end -->' README.md || true)
     [ "$s" = 1 ] && [ "$e" = 1 ] || { echo "README needs exactly one versions marker pair (start=$s end=$e)" >&2; exit 1; }
@@ -307,7 +304,6 @@ readme-versions:
     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
     declare -A cell
     for m in "${majors[@]}"; do
-        # a real pipeline (not process substitution) so pipefail catches a jq/driftah failure
         {{podman}} run --rm --security-opt label=disable --network host \
             {{driftah_image}} --format json --paths '' --short-versions --highlight "$pkgs" \
             "${dest}:${m}" "${dest}:${m}" \
@@ -315,7 +311,6 @@ readme-versions:
         while IFS=$'\t' read -r name vers; do
             cell["${m}|${name}"]="$vers"
         done < "$tmp/kv"
-        # kernel is always installed; its absence means driftah returned nothing usable -> don't clobber good data
         [ -n "${cell["${m}|kernel"]:-}" ] || { echo "no kernel version for ${m} — refusing to update README" >&2; exit 1; }
     done
 
@@ -340,3 +335,70 @@ readme-versions:
     ' README.md > "$tmp/README.md"
     mv "$tmp/README.md" README.md
     echo "README versions table updated"
+
+[private]
+[group('disk')]
+verify-source ref:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case '{{ ref }}' in
+        localhost/*|containers-storage:*|oci:*|dir:*)
+            echo "verify-source: {{ ref }} is local — no signature to verify" ;;
+        *)
+            echo "verify-source: verifying {{ ref }} against {{public_key}} before building"
+            just verify-image '{{ ref }}' ;;
+    esac
+
+[group('publish')]
+pull-image variant=variant major=version_major:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="{{ major }}"
+    if [ -n "{{ variant }}" ]; then tag="{{ major }}-{{ variant }}"; fi
+    {{podman}} pull "{{image}}:${tag}"
+
+[group('disk')]
+build-iso variant=variant major=version_major type="anaconda-iso":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="{{ major }}"
+    if [ -n "{{ variant }}" ]; then tag="{{ major }}-{{ variant }}"; fi
+    ref="{{image}}:${tag}"
+    just verify-source "$ref"
+    {{podman}} pull "$ref"
+    mkdir -p "{{output_dir}}"
+    {{podman}} run --rm --privileged --security-opt label=disable \
+        -v "$(pwd)/{{output_dir}}":/output \
+        -v /var/lib/containers/storage:/var/lib/containers/storage \
+        {{bib_image}} \
+        --type {{ type }} --local "$ref"
+    echo "ISO written under {{output_dir}}/bootiso/"
+
+[group('disk')]
+build-vm variant=variant major=version_major size="10G":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="{{ major }}"
+    if [ -n "{{ variant }}" ]; then tag="{{ major }}-{{ variant }}"; fi
+    ref="{{image}}:${tag}"
+    just verify-source "$ref"
+    {{podman}} pull "$ref"
+    mkdir -p "{{output_dir}}"
+    truncate -s {{ size }} "{{output_dir}}/disk.raw"
+    {{podman}} run --rm --privileged --security-opt label=disable --pid=host \
+        -v /var/lib/containers/storage:/var/lib/containers/storage \
+        -v /dev:/dev \
+        -v "$(pwd)/{{output_dir}}":/output \
+        "$ref" \
+        bootc install to-disk --via-loopback --generic-image --wipe /output/disk.raw
+    echo "raw disk at {{output_dir}}/disk.raw"
+
+[group('run')]
+run-iso iso="output/bootiso/install.iso" mem="4096":
+    qemu-system-x86_64 -machine q35 -accel kvm -cpu host -m {{ mem }} \
+        -bios {{ovmf}} -cdrom "{{ iso }}" -boot d
+
+[group('run')]
+run-vm disk="output/disk.raw" mem="4096":
+    qemu-system-x86_64 -machine q35 -accel kvm -cpu host -m {{ mem }} \
+        -bios {{ovmf}} -drive file="{{ disk }}",format=raw,if=virtio
