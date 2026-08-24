@@ -336,6 +336,20 @@ readme-versions:
     mv "$tmp/README.md" README.md
     echo "README versions table updated"
 
+# verify a source image is signed by the project key before building from it (local images have no signature to check)
+[private]
+[group('disk')]
+verify-source ref:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case '{{ ref }}' in
+        localhost/*|containers-storage:*|oci:*|dir:*)
+            echo "verify-source: {{ ref }} is local — no signature to verify" ;;
+        *)
+            echo "verify-source: verifying {{ ref }} against {{public_key}} before building"
+            just verify-image '{{ ref }}' ;;
+    esac
+
 # pull a published image: `just pull-image workstation 10-kitten`
 [group('publish')]
 pull-image variant=variant major=version_major:
@@ -350,6 +364,7 @@ pull-image variant=variant major=version_major:
 build-iso ref=local_image type="anaconda-iso":
     #!/usr/bin/env bash
     set -euo pipefail
+    just verify-source "{{ ref }}"
     mkdir -p "{{output_dir}}"
     {{podman}} run --rm --privileged --security-opt label=disable \
         -v "$(pwd)/{{output_dir}}":/output \
@@ -363,6 +378,7 @@ build-iso ref=local_image type="anaconda-iso":
 build-vm ref=local_image size="10G":
     #!/usr/bin/env bash
     set -euo pipefail
+    just verify-source "{{ ref }}"
     mkdir -p "{{output_dir}}"
     truncate -s {{ size }} "{{output_dir}}/disk.raw"
     {{podman}} run --rm --privileged --security-opt label=disable --pid=host \
