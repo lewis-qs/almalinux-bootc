@@ -148,10 +148,10 @@ sigstore-keygen:
     echo "Private key: $out/sigstore.private"
     echo "Set GH secret SIGSTORE_PRIVATE_KEY from it and back it up, then: rm -rf $out"
 
-# the previous released tag for a major (empty if none), for release-note diffs
+# the previous released tag for a major+variant (empty if none), for release-note diffs
 [private]
 [group('release')]
-previous-release major current:
+previous-release major variant current:
     #!/usr/bin/env bash
     set -euo pipefail
     : "${GHCR_TOKEN:?previous-release needs GHCR_TOKEN}"
@@ -161,9 +161,10 @@ previous-release major current:
     authb64="$(printf '%s:%s' "$GITHUB_ACTOR" "$GHCR_TOKEN" | base64 -w0)"
     printf '{"auths":{"%s":{"auth":"%s"}}}' "$host" "$authb64" > "$work/auth.json"
     tls=(); [ "${SIGN_INSECURE:-}" = "true" ] && tls=(--tls-verify=false)
+    vs=""; [ '{{ variant }}' != "base" ] && vs="-{{ variant }}"
     case '{{ major }}' in
-      10-kitten) pat='^10-kitten-[0-9]{8}$' ;;
-      *) pat='^{{ major }}\.[0-9]+-[0-9]{8}$' ;;
+      10-kitten) pat="^10-kitten${vs}-[0-9]{8}$" ;;
+      *) pat="^{{ major }}\.[0-9]+${vs}-[0-9]{8}$" ;;
     esac
     tags="$({{podman}} run --rm --security-opt label=disable --network host \
         -v "$work:/work:Z" -e REGISTRY_AUTH_FILE=/work/auth.json \

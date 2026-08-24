@@ -73,18 +73,19 @@ jobs:
 
       - name: Find previous release
         id: prev
-        if: ${{ env.DRY_RUN != 'true' && matrix.IMAGE_VARIANT == 'base' }}
+        if: ${{ env.DRY_RUN != 'true' }}
         continue-on-error: true
         env:
           MAJOR: ${{ matrix.VERSION_MAJOR }}
+          IMAGE_VARIANT: ${{ matrix.IMAGE_VARIANT }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          out="$(just previous-release "$MAJOR" "$VERSION")"
+          out="$(just previous-release "$MAJOR" "$IMAGE_VARIANT" "$VERSION")"
           echo "version=$out" >> "$GITHUB_OUTPUT"
 
       - name: Diff release notes
         id: notes
-        if: ${{ env.DRY_RUN != 'true' && steps.prev.outputs.version != '' && matrix.IMAGE_VARIANT == 'base' }}
+        if: ${{ env.DRY_RUN != 'true' && steps.prev.outputs.version != '' }}
         continue-on-error: true
         uses: lewis-qs/driftah@ed2dfaaabb29143f1f70b6b9eb2e8a4648a0b22b # v1
         with:
@@ -93,11 +94,12 @@ jobs:
           args: --ignore-packages kernel --short-versions --ignore usr/lib/.build-id/ --highlight kernel,bootc,systemd,podman,dnf,ostree,NetworkManager,glibc,openssl,selinux-policy
 
       - name: Create GitHub Release
-        if: ${{ env.DRY_RUN != 'true' && matrix.IMAGE_VARIANT == 'base' }}
+        if: ${{ env.DRY_RUN != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
           MAJOR: ${{ matrix.VERSION_MAJOR }}
+          IMAGE_VARIANT: ${{ matrix.IMAGE_VARIANT }}
           NOTES: ${{ steps.notes.outputs.notes }}
         run: |
           ref="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
@@ -105,12 +107,19 @@ jobs:
             echo "Release $VERSION already exists — skipping"
             exit 0
           fi
+          title="AlmaLinux ${MAJOR}"
+          extra=()
+          if [ "$IMAGE_VARIANT" != "base" ]; then
+            title="${title} ${IMAGE_VARIANT^}"   # e.g. "AlmaLinux 10 Workstation"
+            extra=(--latest=false)               # keep the base image as the repo's "Latest"
+          fi
+          title="${title} — ${VERSION}"
           {
             if [ -n "${NOTES:-}" ]; then printf '%s\n\n' "$NOTES"; fi
             printf '```\npodman pull %s\n```\n\n' "$ref"
             printf 'Signed with the sigstore key in `cosign.pub`.\n'
           } > body.md
-          gh release create "$VERSION" --title "AlmaLinux ${MAJOR} — ${VERSION}" --notes-file body.md
+          gh release create "$VERSION" --title "$title" --notes-file body.md "${extra[@]}"
 
   update-readme:
     needs: release
