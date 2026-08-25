@@ -397,12 +397,10 @@ build-vm variant=variant major=version_major size="10G":
         bootc install to-disk --via-loopback --generic-image --wipe /output/disk.raw
     echo "raw disk at {{output_dir}}/disk.raw"
 
-# Boot an installer ISO (UEFI; KVM on Linux, HVF on macOS, TCG when emulating)
 [group('run')]
 run-iso iso="output/bootiso/install.iso" mem="4096":
     @just qemu {{ mem }} {{ if vm_arch == "aarch64" { "-drive media=cdrom,if=virtio,readonly=on,file=" + iso } else { "-cdrom " + iso + " -boot d" } }}
 
-# Boot a raw disk image built by build-vm
 [group('run')]
 run-vm disk="output/disk.raw" mem="4096":
     @just qemu {{ mem }} -drive file={{ disk }},format=raw,if=virtio
