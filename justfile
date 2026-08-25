@@ -410,17 +410,27 @@ run-vm disk="output/disk.raw" mem="4096":
 qemu mem *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    fw='{{ ovmf }}'
-    if [ -z "$fw" ]; then
-        case '{{ os() }}' in
-            macos) fw="$(brew --prefix qemu 2>/dev/null || true)/share/qemu/edk2-{{ vm_arch }}-code.fd" ;;
-            *) if [ '{{ vm_arch }}' = aarch64 ]; then
-                   fw=/usr/share/edk2/aarch64/QEMU_EFI-silent-pflash.raw
-               else
-                   fw=/usr/share/edk2/ovmf/OVMF_CODE.fd
-               fi ;;
-        esac
-    fi
-    [ -f "$fw" ] || { echo "UEFI firmware not found at ${fw} — install it (macOS: brew install qemu) or set OVMF_CODE" >&2; exit 1; }
-    exec qemu-system-{{ vm_arch }} -machine {{ qemu_machine }} -accel {{ accel }} -cpu {{ qemu_cpu }} \
-        -m {{ mem }} -bios "$fw" {{ args }}
+    code='{{ ovmf }}'; vars="${OVMF_VARS:-}"
+    case '{{ os() }}' in
+        macos)
+            d="$(brew --prefix qemu 2>/dev/null || true)/share/qemu"
+            : "${code:=$d/edk2-{{ vm_arch }}-code.fd}"
+            if [ '{{ vm_arch }}' = aarch64 ]; then : "${vars:=$d/edk2-arm-vars.fd}"; else : "${vars:=$d/edk2-i386-vars.fd}"; fi ;;
+        *)
+            if [ '{{ vm_arch }}' = aarch64 ]; then
+                : "${code:=/usr/share/edk2/aarch64/QEMU_EFI-silent-pflash.raw}"
+                : "${vars:=/usr/share/edk2/aarch64/vars-template-pflash.raw}"
+            else
+                : "${code:=/usr/share/edk2/ovmf/OVMF_CODE.fd}"
+                : "${vars:=/usr/share/edk2/ovmf/OVMF_VARS.fd}"
+            fi ;;
+    esac
+    for f in "$code" "$vars"; do
+        [ -f "$f" ] || { echo "UEFI firmware not found at ${f} — install it (macOS: brew install qemu) or set OVMF_CODE/OVMF_VARS" >&2; exit 1; }
+    done
+    nvram='{{ output_dir }}/efivars-{{ vm_arch }}.fd'
+    if [ ! -f "$nvram" ]; then mkdir -p '{{ output_dir }}'; cp "$vars" "$nvram"; chmod u+w "$nvram"; fi
+    exec qemu-system-{{ vm_arch }} -machine {{ qemu_machine }} -accel {{ accel }} -cpu {{ qemu_cpu }} -m {{ mem }} \
+        -drive if=pflash,format=raw,unit=0,readonly=on,file="$code" \
+        -drive if=pflash,format=raw,unit=1,file="$nvram" \
+        {{ args }}
