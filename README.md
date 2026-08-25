@@ -97,7 +97,10 @@ just build-vm   workstation 10-kitten   # -> output/disk.raw             (bootc 
 ```
 
 `build-iso` and `build-vm` verify the image's signature against `cosign.pub`
-before building. Boot the result in qemu (UEFI, KVM):
+before building. The `build-*` recipes need a Linux host (`build-vm` runs
+`bootc install to-disk` against the host's loop devices, and podman is invoked
+with `sudo`); the `run-*` recipes work on Linux and macOS. Boot the result in
+qemu (UEFI, with KVM on Linux and HVF on macOS):
 
 ```bash
 just run-iso    # boots output/bootiso/install.iso
@@ -105,8 +108,12 @@ just run-vm     # boots output/disk.raw
 ```
 
 Extra prerequisites: `bootc-image-builder` (pulled automatically) for `build-iso`,
-and for the `run-*` recipes `qemu` with OVMF firmware (override the path with
-`OVMF_CODE=` if yours differs). Run `just --list` for the full recipe set.
+and for the `run-*` recipes `qemu` plus UEFI firmware — `brew install qemu` on
+macOS, `edk2-ovmf`/`qemu-system-*` on Linux. The recipes find the firmware for
+your platform automatically; override with `OVMF_CODE=` if yours differs. The
+guest architecture follows `PLATFORM` (override with `VM_ARCH=`), and qemu drops
+to TCG emulation when it doesn't match the host. Run `just --list` for the full
+recipe set.
 
 ## Contributing and Community
 

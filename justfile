@@ -11,7 +11,11 @@ skopeo_image := env_var_or_default("SKOPEO_IMAGE", "quay.io/skopeo/stable:latest
 rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/centos-bootc:stream10")
 driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:e953b9f0e42b10ed62e588ef1cfde417b0d739c367cadb749f1f09a3b3af8126")  # v1.4.1
 bib_image := env_var_or_default("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder:latest")
-ovmf := env_var_or_default("OVMF_CODE", "/usr/share/edk2/ovmf/OVMF_CODE.fd")
+ovmf := env_var_or_default("OVMF_CODE", "")
+vm_arch := env_var_or_default("VM_ARCH", if platform =~ "arm64|aarch64" { "aarch64" } else { "x86_64" })
+accel := env_var_or_default("QEMU_ACCEL", if vm_arch != arch() { "tcg" } else if os() == "macos" { "hvf" } else { "kvm" })
+qemu_machine := if vm_arch == "aarch64" { "virt" } else { "q35" }
+qemu_cpu := if accel == "tcg" { "max" } else { "host" }
 output_dir := env_var_or_default("OUTPUT_DIR", "output")
 podman := "sudo podman"
 
@@ -393,12 +397,32 @@ build-vm variant=variant major=version_major size="10G":
         bootc install to-disk --via-loopback --generic-image --wipe /output/disk.raw
     echo "raw disk at {{output_dir}}/disk.raw"
 
+# Boot an installer ISO (UEFI; KVM on Linux, HVF on macOS, TCG when emulating)
 [group('run')]
 run-iso iso="output/bootiso/install.iso" mem="4096":
-    qemu-system-x86_64 -machine q35 -accel kvm -cpu host -m {{ mem }} \
-        -bios {{ovmf}} -cdrom "{{ iso }}" -boot d
+    @just qemu {{ mem }} {{ if vm_arch == "aarch64" { "-drive media=cdrom,if=virtio,readonly=on,file=" + iso } else { "-cdrom " + iso + " -boot d" } }}
 
+# Boot a raw disk image built by build-vm
 [group('run')]
 run-vm disk="output/disk.raw" mem="4096":
-    qemu-system-x86_64 -machine q35 -accel kvm -cpu host -m {{ mem }} \
-        -bios {{ovmf}} -drive file="{{ disk }}",format=raw,if=virtio
+    @just qemu {{ mem }} -drive file={{ disk }},format=raw,if=virtio
+
+[private]
+[group('run')]
+qemu mem *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fw='{{ ovmf }}'
+    if [ -z "$fw" ]; then
+        case '{{ os() }}' in
+            macos) fw="$(brew --prefix qemu 2>/dev/null || true)/share/qemu/edk2-{{ vm_arch }}-code.fd" ;;
+            *) if [ '{{ vm_arch }}' = aarch64 ]; then
+                   fw=/usr/share/edk2/aarch64/QEMU_EFI-silent-pflash.raw
+               else
+                   fw=/usr/share/edk2/ovmf/OVMF_CODE.fd
+               fi ;;
+        esac
+    fi
+    [ -f "$fw" ] || { echo "UEFI firmware not found at ${fw} — install it (macOS: brew install qemu) or set OVMF_CODE" >&2; exit 1; }
+    exec qemu-system-{{ vm_arch }} -machine {{ qemu_machine }} -accel {{ accel }} -cpu {{ qemu_cpu }} \
+        -m {{ mem }} -bios "$fw" {{ args }}
