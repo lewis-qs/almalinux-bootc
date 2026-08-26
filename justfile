@@ -12,10 +12,12 @@ rechunk_image := env_var_or_default("RECHUNK_IMAGE", "quay.io/centos-bootc/cento
 driftah_image := env_var_or_default("DRIFTAH_IMAGE", "ghcr.io/lewis-qs/driftah@sha256:e953b9f0e42b10ed62e588ef1cfde417b0d739c367cadb749f1f09a3b3af8126")  # v1.4.1
 bib_image := env_var_or_default("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder:latest")
 ovmf := env_var_or_default("OVMF_CODE", "")
-vm_arch := env_var_or_default("VM_ARCH", if platform =~ "arm64|aarch64" { "aarch64" } else { "x86_64" })
+vm_arch := env_var_or_default("VM_ARCH", arch())
 accel := env_var_or_default("QEMU_ACCEL", if vm_arch != arch() { "tcg" } else if os() == "macos" { "hvf" } else { "kvm" })
 qemu_machine := if vm_arch == "aarch64" { "virt" } else { "q35" }
 qemu_cpu := if accel == "tcg" { "max" } else { "host" }
+# aarch64 virt has no VGA; without a GPU the cocoa/GTK window stays black.
+qemu_display := if vm_arch == "aarch64" { "-device virtio-gpu-pci -device qemu-xhci -device usb-kbd -device usb-tablet" } else { "" }
 output_dir := env_var_or_default("OUTPUT_DIR", "output")
 podman := "sudo podman"
 
@@ -433,4 +435,5 @@ qemu mem *args:
     exec qemu-system-{{ vm_arch }} -machine {{ qemu_machine }} -accel {{ accel }} -cpu {{ qemu_cpu }} -m {{ mem }} \
         -drive if=pflash,format=raw,unit=0,readonly=on,file="$code" \
         -drive if=pflash,format=raw,unit=1,file="$nvram" \
+        {{ qemu_display }} \
         {{ args }}

@@ -111,9 +111,9 @@ Extra prerequisites: `bootc-image-builder` (pulled automatically) for `build-iso
 and for the `run-*` recipes `qemu` plus UEFI firmware — `brew install qemu` on
 macOS, `edk2-ovmf`/`qemu-system-*` on Linux. The recipes find the firmware for
 your platform automatically; override with `OVMF_CODE=` if yours differs. The
-guest architecture follows `PLATFORM` (override with `VM_ARCH=`), and qemu drops
-to TCG emulation when it doesn't match the host. Run `just --list` for the full
-recipe set.
+guest architecture follows the host (override with `VM_ARCH=`), and qemu drops
+to TCG emulation when it doesn't match. Run `just --list` for the full recipe
+set.
 
 ## Contributing and Community
 
