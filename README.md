@@ -24,7 +24,7 @@ Key package versions in the latest published image of each major, refreshed auto
 
 | Package | 9 | 10 | 10-kitten |
 | --- | --- | --- | --- |
-| kernel | `5.14.0-687.54.1` | `6.12.0-211.64.1` | `6.12.0-271` |
+| kernel | `5.14.0-687.57.1` | `6.12.0-211.66.1` | `6.12.0-273` |
 | bootc | `1.16.4-2` | `1.16.4-2` | `1.16.13-1` |
 | systemd | `252-67` | `257-23` | `257-34` |
 | podman | `5.8.2-7` | `5.8.2-9` | `6.1.0-2` |
